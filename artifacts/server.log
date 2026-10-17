@@ -1,0 +1,55 @@
+INFO:     Started server process [16725]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8010 (Press CTRL+C to quit)
+2026-10-17 23:58:20,488 insurwiki.server INFO bootstrapping: index + graph + selfrag + agent ...
+Building prefix dict from the default dictionary ...
+2026-10-17 23:58:20,629 jieba DEBUG Building prefix dict from the default dictionary ...
+Loading model from cache /var/folders/8p/w0g1llx97lzf93_tzn0v343r0000gn/T/jieba.cache
+2026-10-17 23:58:20,631 jieba DEBUG Loading model from cache /var/folders/8p/w0g1llx97lzf93_tzn0v343r0000gn/T/jieba.cache
+Loading model cost 0.218 seconds.
+2026-10-17 23:58:20,847 jieba DEBUG Loading model cost 0.218 seconds.
+Prefix dict has been built successfully.
+2026-10-17 23:58:20,847 jieba DEBUG Prefix dict has been built successfully.
+/Users/leoms/Documents/deepseek-harness-workspace/InsurWiki-RAG/.venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+/Users/leoms/Documents/deepseek-harness-workspace/InsurWiki-RAG/.venv/lib/python3.9/site-packages/langgraph/cache/base/__init__.py:8: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.
+  from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+2026-10-17 23:58:22,790 insurwiki.server INFO bootstrap done: 3396 chunks, graph={'nodes': 1633, 'edges': 1087, 'entity_types': {'责任条款': 673, '保额': 75, '期限': 94, '被保险人群体': 74, '保险产品': 33, '免责条款': 632, '费率因子': 50, '犹豫期': 2}, 'relation_types': {'约定保额': 93, '约定期限': 90, '承保责任': 56, '免除责任': 269, '关联条款': 464, '适用费率': 33, '适用群体': 82}}
+INFO:     127.0.0.1:54831 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54834 - "GET /api/export/obsidian HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54872 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54873 - "GET /api/graph HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54873 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54885 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54885 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54885 - "GET /api/graph HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54915 - "GET /api/graph HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54928 - "GET /api/graph HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54964 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54964 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54965 - "GET /api/graph HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54971 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55064 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55064 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55065 - "GET /api/graph HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55096 - "HEAD /api/export/obsidian HTTP/1.1" 405 Method Not Allowed
+INFO:     127.0.0.1:55104 - "GET /api/export/obsidian HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55146 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55146 - "GET /api/wiki HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55146 - "GET /api/wiki HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55147 - "POST /api/agent/chat/stream HTTP/1.1" 404 Not Found
+2026-10-18 00:07:25,683 sentence_transformers.SentenceTransformer INFO Use pytorch device_name: mps
+2026-10-18 00:07:25,683 sentence_transformers.SentenceTransformer INFO Load pretrained SentenceTransformer: hf_cache/models/bge-small-zh-v1.5
+2026-10-18 00:07:27,734 sentence_transformers.cross_encoder.CrossEncoder INFO Use pytorch device: mps
+Batches:   0%|          | 0/1 [00:00<?, ?it/s]Batches: 100%|██████████| 1/1 [00:02<00:00,  2.45s/it]Batches: 100%|██████████| 1/1 [00:02<00:00,  2.45s/it]
+INFO:     127.0.0.1:55147 - "POST /api/agent/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55163 - "POST /api/agent/chat/stream HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55163 - "POST /api/agent/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55164 - "GET / HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [16725]
+/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/multiprocessing/resource_tracker.py:216: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '

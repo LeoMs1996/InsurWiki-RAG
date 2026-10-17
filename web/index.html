@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InsurWiki-RAG · 保单条款 RAG 与 LLM Wiki 平台</title>
+<style>
+:root{--bg:#0b1020;--card:rgba(255,255,255,.05);--bd:rgba(255,255,255,.12);--tx:#e8ecf5;--mut:#8b93a7;--ac:#5b8cff;--ok:#3fb96f;--warn:#e6a23c;--err:#e5646e}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:radial-gradient(1200px 600px at 70% -10%,#1a2547 0%,var(--bg) 55%);color:var(--tx);min-height:100vh}
+header{padding:18px 28px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--bd);backdrop-filter:blur(8px);position:sticky;top:0;background:rgba(11,16,32,.75);z-index:9}
+header h1{font-size:19px}.logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#5b8cff,#8f5bff);display:flex;align-items:center;justify-content:center;font-weight:800}
+header .sub{color:var(--mut);font-size:12px;margin-left:auto}
+nav{display:flex;gap:6px;padding:14px 28px 0}
+nav button{background:var(--card);border:1px solid var(--bd);color:var(--tx);padding:9px 18px;border-radius:10px;cursor:pointer;font-size:14px}
+nav button.active{background:linear-gradient(135deg,#5b8cff33,#8f5bff33);border-color:#5b8cff88}
+main{padding:18px 28px 60px;max-width:1180px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:18px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:1fr 340px;gap:16px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+textarea,input[type=text]{width:100%;background:rgba(0,0,0,.25);border:1px solid var(--bd);border-radius:10px;color:var(--tx);padding:11px;font-size:14px;resize:vertical}
+.btn{background:linear-gradient(135deg,#5b8cff,#7a5bff);border:none;color:#fff;padding:10px 22px;border-radius:10px;cursor:pointer;font-size:14px;margin-top:10px}
+.btn.ghost{background:var(--card);border:1px solid var(--bd)}
+.btn:disabled{opacity:.5;cursor:wait}
+.answer{white-space:pre-wrap;line-height:1.75;font-size:14.5px;background:rgba(91,140,255,.06);border-left:3px solid var(--ac);padding:14px;border-radius:8px}
+.tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--bd);color:var(--mut);margin-right:6px}
+.tag.ok{color:var(--ok);border-color:var(--ok)} .tag.err{color:var(--err);border-color:var(--err)} .tag.warn{color:var(--warn);border-color:var(--warn)}
+.tok{font-family:ui-monospace,monospace;font-size:12px;color:#9fb4ff}
+.tokline{display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px dashed rgba(255,255,255,.06)}
+.cit{background:rgba(255,255,255,.04);border:1px solid var(--bd);border-radius:9px;padding:10px;margin-top:8px;font-size:12.5px;cursor:pointer}
+.cit:hover{border-color:var(--ac)}
+.cit .ex{color:var(--mut);margin-top:4px;line-height:1.5}
+.wikiitem{padding:12px;border-radius:10px;border:1px solid var(--bd);margin-bottom:10px;cursor:pointer;background:rgba(255,255,255,.03)}
+.wikiitem:hover{border-color:var(--ac)}
+.wikiitem b{font-size:14px}.wikiitem p{color:var(--mut);font-size:12.5px;margin-top:4px}
+.md{line-height:1.8;font-size:14px;white-space:pre-wrap}
+.md h1,.md h2{margin:12px 0 6px;color:#bcd0ff}
+.msg{margin-bottom:12px}.msg .role{font-size:11px;color:var(--mut);margin-bottom:3px}
+.msg .body{background:rgba(255,255,255,.045);padding:10px 12px;border-radius:10px;white-space:pre-wrap;font-size:13.5px;line-height:1.7}
+.msg.user .body{background:rgba(91,140,255,.15)}
+.pend{background:rgba(230,162,60,.12);border:1px solid var(--warn);border-radius:10px;padding:10px;font-size:13px;margin:8px 0}
+.pend button{margin:6px 6px 0 0;padding:5px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx);cursor:pointer;font-size:12px}
+.tool{font-family:ui-monospace,monospace;font-size:11.5px;color:#8fd3a8;background:rgba(63,185,111,.08);border-radius:6px;padding:3px 8px;display:inline-block;margin:2px 4px 2px 0}
+.stat{display:flex;gap:10px;flex-wrap:wrap}
+.stat div{background:rgba(255,255,255,.04);border:1px solid var(--bd);border-radius:10px;padding:10px 16px;font-size:12px;color:var(--mut)}
+.stat b{display:block;font-size:18px;color:var(--tx)}
+.hidden{display:none}
+#kgraph{width:100%;height:420px;background:rgba(0,0,0,.25);border-radius:10px;border:1px solid var(--bd)}
+select{background:#151b30;color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:6px 10px;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">保</div>
+  <h1>InsurWiki-RAG</h1>
+  <span class="tag">Self-RAG</span><span class="tag">GraphRAG</span><span class="tag">LangGraph Agent</span>
+  <span class="sub">基于 InsQABench 的金融级保单条款 RAG 与 LLM Wiki 知识沉淀平台 · <a href="/docs/" style="color:var(--ac)">文档站</a></span>
+</header>
+<nav>
+  <button data-tab="qa" class="active">作业1 · 合规问答（Self-RAG）</button>
+  <button data-tab="wiki">作业1 · Wiki 知识沉淀</button>
+  <button data-tab="agent">作业2 · 保险顾问 Agent</button>
+  <button data-tab="graph">知识图谱</button>
+</nav>
+<main>
+<!-- QA -->
+<section id="tab-qa" class="grid">
+  <div>
+    <div class="card">
+      <h3 style="margin-bottom:10px">合规问答（引用可追溯 · 答案可复核）</h3>
+      <textarea id="q" rows="3" placeholder="例：充电桩保险的免赔额是怎么规定的？ / 今天天气怎么样（域外将被拒答）"></textarea>
+      <button class="btn" id="askBtn" onclick="ask()">提问</button>
+      <button class="btn ghost" onclick="fill('充电桩保险的免赔额是怎么规定的？')">示例1</button>
+      <button class="btn ghost" onclick="fill('保险合同中犹豫期内退保有什么规定？')">示例2</button>
+      <button class="btn ghost" onclick="fill('量子计算机的保修条款是什么？')">域外示例</button>
+    </div>
+    <div class="card hidden" id="ansCard">
+      <div id="ansTags"></div>
+      <div class="answer" id="answer"></div>
+      <div id="citations"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3 style="margin-bottom:8px">Self-RAG 反思轨迹</h3>
+    <div id="reflection" style="font-size:12.5px"><span style="color:var(--mut)">提交问题后，[Retrieve?] [IsRelevant?] [IsSupported?] [IsUseful?] 四类反思 token 会在此展示。</span></div>
+    <div id="graphEv" style="margin-top:10px"></div>
+  </div>
+</section>
+<!-- Wiki -->
+<section id="tab-wiki" class="hidden grid">
+  <div class="card"><h3 style="margin-bottom:12px">Wiki 知识页（LLM 沉淀 · 反哺检索）</h3><div id="wikiList"></div></div>
+  <div class="card"><h3 style="margin-bottom:12px">页面内容</h3><div class="md" id="wikiDetail" style="color:var(--mut)">选择左侧知识页查看。</div></div>
+</section>
+<!-- Agent -->
+<section id="tab-agent" class="hidden">
+  <div class="card" style="max-width:820px;margin:0 auto">
+    <h3 style="margin-bottom:10px">保险顾问 Agent（多轮对话 · 工具调用 · 人工确认）</h3>
+    <div id="agentMsgs" style="min-height:220px;max-height:460px;overflow-y:auto;padding-right:6px"></div>
+    <div id="hiti" class="hidden"></div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <input type="text" id="amsg" placeholder="例：帮我算一下 20万保额 × 0.25% 的保费；或问条款问题" onkeydown="if(event.key==='Enter')agentSend()">
+      <button class="btn" style="margin-top:0" onclick="agentSend()">发送</button>
+    </div>
+    <div style="margin-top:8px">
+      <button class="btn ghost" style="margin-top:0;padding:6px 12px;font-size:12px" onclick="agentFill('帮我算一下：保额20万，费率0.25%，保费是多少？')">计算示例</button>
+      <button class="btn ghost" style="margin-top:0;padding:6px 12px;font-size:12px" onclick="agentFill('家财险都免除哪些责任？')">RAG示例</button>
+    </div>
+  </div>
+</section>
+<!-- Graph -->
+<section id="tab-graph" class="hidden">
+  <div class="card"><h3 style="margin-bottom:10px">保险本体知识图谱（8 类实体 · 受约束关系）</h3>
+<div class="stat" id="gstat" style="margin-bottom:10px"></div><div style="margin-bottom:10px;display:flex;gap:8px"><button class="btn ghost" style="margin-top:0;padding:6px 14px;font-size:12px" onclick="loadGraph()">🔄 重置布局</button><a class="btn ghost" style="margin-top:0;padding:6px 14px;font-size:12px;text-decoration:none" href="/api/export/obsidian" download>⬇ 导出 Obsidian 库（zip）</a><span style="color:var(--mut);font-size:12px;align-self:center">拖拽节点/空白处平移 · 滚轮缩放 · 悬停看详情</span></div><canvas id="kgraph"></canvas></div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');['qa','wiki','agent','graph'].forEach(t=>$('tab-'+t).classList.toggle('hidden',t!==b.dataset.tab));if(b.dataset.tab==='wiki')loadWiki();if(b.dataset.tab==='graph')loadGraph();});
+function fill(q){$('q').value=q}
+/* ---- QA ---- */
+async function ask(){const q=$('q').value.trim();if(!q)return;$('askBtn').disabled=true;$('answer').textContent='思考中…（检索→反思→生成，约5-15秒）';$('ansCard').classList.remove('hidden');
+try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(x=>x.json());
+$('ansTags').innerHTML=`<span class="tag ${r.refused?'err':'ok'}">${r.refused?'⛔ 拒答（合规护栏）':'✅ 作答'}</span><span class="tag">支撑率 ${(r.support_score*100).toFixed(0)}%</span><span class="tag">${r.model}</span><span class="tag">${r.latency_ms}ms</span>`;
+$('answer').textContent=r.answer;
+$('reflection').innerHTML=(r.reflection||[]).map(t=>`<div class="tokline"><span class="tok">${t.token}</span><span>${t.value}</span>${t.detail?`<span style="color:var(--mut);font-size:11px">${typeof t.detail==='string'?t.detail:t.detail.length+' 条相关'}</span>`:''}${t.rewrite?`<span style="color:var(--warn);font-size:11px">→ ${t.rewrite.slice(0,40)}</span>`:''}</div>`).join('');
+const ge=r.graph_evidence||{};$('graphEv').innerHTML=ge.linked_entities&&ge.linked_entities.length?`<div class="tag warn">图谱实体链接：${ge.linked_entities.join('、')}</div><div style="font-size:11.5px;color:var(--mut);margin-top:6px">${(ge.triples||[]).slice(0,4).map(t=>`${t.head} --${t.relation}--> ${t.tail}`).join('<br>')}</div>`:'';
+$('citations').innerHTML='<h4 style="margin:12px 0 4px;font-size:13px;color:var(--mut)">引用（点击查看原文摘录）</h4>'+(r.citations||[]).map((c,i)=>`<div class="cit" onclick="this.querySelector('.ex').style.display=this.querySelector('.ex').style.display==='none'?'block':'none'"><b>[${i+1}]</b> ${c.n} · ${c.policy} <span class="tag">${c.scores.from_graph?'图谱通道':''}${c.scores.rerank!=null?' rerank '+c.scores.rerank:' rrf '+c.scores.rrf}</span><div class="ex" style="display:none">${c.excerpt}…</div></div>`).join('');
+}catch(e){$('answer').textContent='请求失败：'+e}finally{$('askBtn').disabled=false}}
+/* ---- Wiki ---- */
+async function loadWiki(){const r=await fetch('/api/wiki').then(x=>x.json());$('wikiList').innerHTML=r.pages.map(p=>`<div class="wikiitem" onclick="wikiDetail('${p.topic_id}')"><b>${p.title}</b><span class="tag">${p.etype}</span><p>${(p.overview||'').slice(0,80)}</p></div>`).join('')||'<span style="color:var(--mut)">Wiki 未生成，先运行沉淀流水线。</span>'}
+async function wikiDetail(id){const r=await fetch('/api/wiki/'+id).then(x=>x.json());$('wikiDetail').textContent=r.markdown;$('wikiDetail').style.color='var(--tx)'}
+/* ---- Agent ---- */
+let hitiPending=null,hitiMsg=null;
+function agentFill(m){$('amsg').value=m}
+async function agentSend(){const m=$('amsg').value.trim();if(!m)return;addMsg('user',m);$('amsg').value='';return agentPost(m,null)}
+async function agentConfirm(){if(hitiMsg){const intent=$('selIntent').value;hitiPending=null;$('hiti').classList.add('hidden');return agentPost(hitiMsg,intent)}}
+async function agentPost(m,confirmed){const body={session_id:'web',message:m};if(confirmed)body.confirmed_intent=confirmed;
+let el=null,bodyEl=null,finished=false;
+const ensure=(intent)=>{if(!el){el=addMsg('bot','',null,intent);bodyEl=el.querySelector('.body')}};
+try{const resp=await fetch('/api/agent/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+if(!resp.ok||!resp.body)throw new Error('HTTP '+resp.status);
+const reader=resp.body.getReader(),dec=new TextDecoder();let buf='';
+const handle=frame=>{let ev='message',data='';frame.split('\n').forEach(l=>{if(l.startsWith('event:'))ev=l.slice(6).trim();else if(l.startsWith('data:'))data+=l.slice(5).trim()});let p;try{p=JSON.parse(data)}catch(e){return}
+if(ev==='intent')ensure(p);
+else if(ev==='tools'){ensure();let row=el.querySelector('.toolrow');(p.tool_calls||[]).forEach(c=>{if(!row){row=document.createElement('div');row.className='toolrow';row.style.marginTop='4px';el.appendChild(row)}const s=document.createElement('span');s.className='tool';s.textContent='🔧 '+c.tool;row.appendChild(s)})}
+else if(ev==='delta'){ensure();bodyEl.textContent+=p.text;$('agentMsgs').scrollTop=1e9}
+else if(ev==='done'){finished=true;ensure(p.intent);bodyEl.textContent=p.answer;if(p.need_human)showHiti(m,p);$('agentMsgs').scrollTop=1e9}
+else if(ev==='error')throw new Error(p.message||'stream error')};
+while(true){const{value,done}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;while((i=buf.indexOf('\n\n'))>=0){handle(buf.slice(0,i));buf=buf.slice(i+2)}}
+if(!finished)throw new Error('stream ended unexpectedly');
+}catch(e){/* 流式失败 → 回退一次性接口 */
+if(el&&bodyEl&&bodyEl.textContent){bodyEl.textContent+='\n\n（流中断：'+e.message+'，已回退重试）'}
+try{const r=await fetch('/api/agent/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(x=>x.json());
+addMsg('bot',r.answer,(r.tool_calls||[]).map(c=>c.tool),r.intent);
+if(r.need_human)showHiti(m,r)}catch(e2){addMsg('bot','请求失败：'+e2)}}}
+function showHiti(m,r){hitiPending='intent';hitiMsg=m;$('hiti').innerHTML=`<div class="pend">🤝 ${r.pending_confirmation.question}<br><select id="selIntent"><option value="rag">条款知识问答</option><option value="graph">图谱关系查询</option><option value="calc">保费/保额计算</option><option value="chat">闲聊</option></select><button onclick="agentConfirm()">按此意图继续</button></div>`;$('hiti').classList.remove('hidden')}
+function addMsg(role,text,tools,intent){const d=document.createElement('div');d.className='msg '+(role==='user'?'user':'bot');
+d.innerHTML=`<div class="role">${role==='user'?'你':'顾问 Agent'}${intent&&role!=='user'?` · 意图 ${intent.intent}(${(intent.confidence||0).toFixed(2)})`:''}</div><div class="body">${text}</div>${tools&&tools.length?`<div class="toolrow" style="margin-top:4px">${tools.map(t=>`<span class="tool">🔧 ${t}</span>`).join('')}</div>`:''}`;
+$('agentMsgs').appendChild(d);$('agentMsgs').scrollTop=1e9;return d}
+/* ---- Graph ---- */
+async function loadGraph(){const r=await fetch('/api/graph').then(x=>x.json());
+$('gstat').innerHTML=`<div><b>${(r.nodes||[]).length}</b>实体</div><div><b>${(r.edges||[]).length}</b>关系</div>`+Object.entries(r.entity_types||{}).map(([k,v])=>`<div><b>${v}</b>${k}</div>`).join('');
+drawGraph(r)}
+const COLORS={'保险产品':'#ff7eb6','责任条款':'#5b8cff','免责条款':'#e5646e','费率因子':'#e6a23c','犹豫期':'#3fb96f','保额':'#8f5bff','期限':'#4dd0e1','被保险人群体':'#aed581'};
+let GSIM=null;
+function drawGraph(g){const cv=$('kgraph'),ctx=cv.getContext('2d');
+const W=cv.offsetWidth||900,H=420;cv.width=W*devicePixelRatio;cv.height=H*devicePixelRatio;
+const nodes=(g.nodes||[]).slice(0,220),nameSet=new Set(nodes.map(n=>n.name));
+const es=(g.edges||[]).filter(e=>nameSet.has(e.head)&&nameSet.has(e.tail)).slice(0,400);
+const cols=Math.ceil(Math.sqrt(nodes.length*(W/H)));const rows=Math.ceil(nodes.length/cols);const gw=(W-60)/cols,gh=(H-60)/rows;nodes.forEach((n,i)=>{const c=i%cols,r=Math.floor(i/cols);n.x=30+(c+.5)*gw+((i%7)-3)*4;n.y=30+(r+.5)*gh+((i%5)-2)*4;n.vx=0;n.vy=0});
+const deg={};es.forEach(e=>{deg[e.head]=(deg[e.head]||0)+1;deg[e.tail]=(deg[e.tail]||0)+1});
+const st={nodes,es,ctx,cv,W,H,deg,drag:null,hover:null,pan:null,tx:0,ty:0,scale:1,cool:1};GSIM=st;
+function pos(e){const r=cv.getBoundingClientRect();return{x:(e.clientX-r.left-st.tx)/st.scale,y:(e.clientY-r.top-st.ty)/st.scale}}
+function pick(p){let best=null,bd=18*18;nodes.forEach(n=>{const d=(n.x-p.x)**2+(n.y-p.y)**2;if(d<bd){bd=d;best=n}});return best}
+cv.onmousedown=e=>{const p=pos(e);const n=pick(p);if(n){st.drag=n;n.fx=n.x;n.fy=n.y}else{st.pan={x:e.clientX-st.tx,y:e.clientY-st.ty}}};
+window.addEventListener('mousemove',e=>{if(!GSIM)return;const r=cv.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)return;const p=st.drag?null:pos(e);st.hover=p?pick(p):null;cv.style.cursor=st.hover?'pointer':(st.drag?'grabbing':'grab');if(st.drag){const q=pos(e);st.drag.fx=q.x;st.drag.fy=q.y;st.drag.x=q.x;st.drag.y=q.y}if(st.pan){st.tx=e.clientX-st.pan.x;st.ty=e.clientY-st.pan.y}});
+window.addEventListener('mouseup',()=>{if(!GSIM)return;if(st.drag){st.drag.fx=null;st.drag.fy=null;st.drag=null}st.pan=null});
+cv.onwheel=e=>{e.preventDefault();const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;const f=e.deltaY<0?1.12:1/1.12;const ns=Math.min(4,Math.max(.3,st.scale*f));st.tx=mx-(mx-st.tx)*ns/st.scale;st.ty=my-(my-st.ty)*ns/st.scale;st.scale=ns};
+(function tick(){if(GSIM!==st)return;
+if(st.cool>0.02){st.cool*=.997;const k=70;
+for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){const a=nodes[i],b=nodes[j];let dx=b.x-a.x,dy=b.y-a.y;let d2=dx*dx+dy*dy;if(d2>240*240)continue;if(d2<1){dx=(i%2?1:-1)*.5;dy=(j%2?1:-1)*.5;d2=.5}const d=Math.sqrt(d2);let f=Math.min(k*30/d2,.35)*st.cool;dx/=d;dy/=d;a.vx-=dx*f*60;a.vy-=dy*f*60;b.vx+=dx*f*60;b.vy+=dy*f*60}
+es.forEach(e=>{const a=nodes.find(n=>n.name===e.head),b=nodes.find(n=>n.name===e.tail);if(!a||!b)return;let dx=b.x-a.x,dy=b.y-a.y;const d=Math.sqrt(dx*dx+dy*dy)||1;const f=(d-90)*.02*st.cool;dx*=f/d;dy*=f/d;a.vx+=dx;a.vy+=dy;b.vx-=dx;b.vy-=dy});
+const collide=()=>{for(let it=0;it<3;it++)for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){const a=nodes[i],b=nodes[j];let dx=b.x-a.x,dy=b.y-a.y;let d2=dx*dx+dy*dy;const md=(a.fx!=null||b.fx!=null)?24:14;if(d2<md*md){const d=Math.sqrt(d2);if(d<.01){if(b.fx==null){dx=W/2-b.x;dy=H/2-b.y;const dd=Math.hypot(dx,dy)||1;b.x+=dx/dd*md;b.y+=dy/dd*md}}else{dx/=(d||1);dy/=(d||1);const push=(md-d)/2+1;if(a.fx==null){a.x-=dx*push;a.y-=dy*push}if(b.fx==null){b.x+=dx*push;b.y+=dy*push}}}}};collide();
+nodes.forEach(n=>{if(n.fx!=null){n.x=n.fx;n.y=n.fy;n.vx=n.vy=0;return}n.vx*=.82;n.vy*=.82;const vm=12,vv=Math.hypot(n.vx,n.vy);if(vv>vm){n.vx*=vm/vv;n.vy*=vm/vv}n.x+=n.vx;n.y+=n.vy;if(n.x<20)n.x=20;if(n.x>W-20)n.x=W-20;if(n.y<16)n.y=16;if(n.y>H-16)n.y=H-16});collide()}
+ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);ctx.clearRect(0,0,W,H);ctx.translate(st.tx,st.ty);ctx.scale(st.scale,st.scale);
+ctx.strokeStyle='rgba(139,147,167,.22)';es.forEach(e=>{const a=nodes.find(n=>n.name===e.head),b=nodes.find(n=>n.name===e.tail);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()});
+nodes.forEach(n=>{const r=4+Math.min((st.deg[n.name]||1),8);const hot=n===st.hover||n===st.drag;if(hot){ctx.shadowColor=COLORS[n.type]||'#8b93a7';ctx.shadowBlur=12}ctx.fillStyle=COLORS[n.type]||'#8b93a7';ctx.beginPath();ctx.arc(n.x,n.y,r,0,7);ctx.fill();ctx.shadowBlur=0});
+ctx.font='10px sans-serif';nodes.forEach(n=>{const hot=n===st.hover||n===st.drag;const show=hot||(st.deg[n.name]||0)>=3||(st.scale>1.6&&st.deg[n.name]>=1);if(!show)return;ctx.fillStyle=hot?'#fff':'rgba(232,236,245,.8)';const t=(hot||st.scale>2)?n.name:n.name.slice(0,8);ctx.strokeStyle='rgba(10,14,22,.85)';ctx.lineWidth=3;ctx.strokeText(t,n.x+8,n.y-9);ctx.fillText(t,n.x+8,n.y-9)});
+if(st.hover){const t=st.hover.name+' · '+(st.hover.type||'')+' · 度'+(st.deg[st.hover.name]||0);ctx.font='11px sans-serif';ctx.strokeStyle='rgba(10,14,22,.9)';ctx.lineWidth=4;ctx.strokeText(t,10,H-10);ctx.fillStyle='#fff';ctx.fillText(t,10,H-10)}
+requestAnimationFrame(tick)})()}
+</script>
+</body>
+</html>

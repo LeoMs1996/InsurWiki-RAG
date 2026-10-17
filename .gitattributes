@@ -1,0 +1,2 @@
+data/raw/insqabench* filter=lfs diff=lfs merge=lfs -text
+data/raw/insqabench_clause_train.json filter=lfs diff=lfs merge=lfs -text

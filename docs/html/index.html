@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>InsurWiki-RAG · 文档站</title>
+<style>
+:root{--bg:#0b1020;--card:rgba(255,255,255,.05);--bd:rgba(255,255,255,.12);--tx:#e8ecf5;--mut:#8b93a7;--ac:#5b8cff}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"PingFang SC",sans-serif;background:radial-gradient(1000px 500px at 80% -10%,#1a2547 0%,#0b1020 55%);color:var(--tx)}
+header{padding:20px 32px;border-bottom:1px solid var(--bd);display:flex;align-items:baseline;gap:14px;position:sticky;top:0;background:rgba(11,16,32,.85);backdrop-filter:blur(8px);z-index:9}
+header h1{font-size:20px}header span{color:var(--mut);font-size:12.5px}
+header a{color:var(--ac);text-decoration:none;font-size:13px;margin-left:auto}
+.wrap{display:grid;grid-template-columns:230px 1fr;min-height:calc(100vh - 70px)}
+aside{border-right:1px solid var(--bd);padding:20px 0}
+aside a{display:block;padding:9px 24px;color:var(--mut);text-decoration:none;font-size:13.5px;border-left:3px solid transparent}
+aside a.active,aside a:hover{color:var(--tx);border-left-color:var(--ac);background:rgba(91,140,255,.07)}
+main{padding:26px 34px;max-width:980px}
+main h2{font-size:19px;margin-bottom:4px;color:#bcd0ff}
+main h3{font-size:15px;margin:18px 0 8px;color:#bcd0ff}
+main p,main li{font-size:14px;line-height:1.85;color:#cfd6e4}
+main .lead{color:var(--mut);font-size:13px;margin-bottom:16px}
+main h3 b{color:#8fd3a8;font-weight:600;font-size:12px;margin-left:6px}
+table{width:100%;border-collapse:collapse;margin:10px 0 18px;font-size:13px}
+th,td{border:1px solid var(--bd);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:rgba(91,140,255,.1);color:#bcd0ff}
+code{background:rgba(0,0,0,.3);padding:1px 6px;border-radius:5px;font-size:12.5px;color:#9fb4ff}
+.mermaid{background:rgba(0,0,0,.22);border:1px solid var(--bd);border-radius:12px;padding:14px;margin:12px 0 20px;overflow-x:auto;text-align:center}
+.howto{background:rgba(63,185,111,.06);border-left:3px solid #3fb96f;padding:10px 14px;border-radius:8px;margin:10px 0;font-size:13.5px}
+.howto b{color:#8fd3a8}
+kbd{background:#1c2440;border:1px solid var(--bd);border-radius:5px;padding:1px 7px;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>InsurWiki-RAG 流程文档站</h1>
+  <span>基于 InsQABench 的金融级保单条款 RAG 与 LLM Wiki 知识沉淀平台</span>
+  <a href="/">← 返回工作台</a>
+</header>
+<div class="wrap">
+<aside id="nav"></aside>
+<main id="content"><p class="lead">加载中…</p></main>
+</div>
+<script src="mermaid.min.js"></script>
+<script>
+const PAGES=[
+ {id:'index',t:'① 总体架构'},
+ {id:'data',t:'② 数据获取与处理'},
+ {id:'chunking',t:'③ 结构感知切分'},
+ {id:'retrieval',t:'④ 混合检索+RRF+Rerank'},
+ {id:'selfrag',t:'⑤ Self-RAG 反思循环'},
+ {id:'graphrag',t:'⑥ GraphRAG 本体约束'},
+ {id:'compliance',t:'⑦ 引用追溯与合规护栏'},
+ {id:'wiki',t:'⑧ Wiki 知识沉淀闭环'},
+ {id:'agent',t:'⑨ LangGraph Agent 编排'},
+ {id:'tech',t:'⑩ 技术选型表'},
+];
+</script>
+<script src="content.js"></script>
+<script>
+mermaid.initialize({startOnLoad:false,theme:'dark',themeVariables:{primaryColor:'#1c2b52',primaryBorderColor:'#5b8cff',lineColor:'#8b93a7',fontSize:'13px'}});
+const nav=document.getElementById('nav'),content=document.getElementById('content');
+nav.innerHTML=PAGES.map(p=>`<a href="#${p.id}" data-p="${p.id}">${p.t}</a>`).join('');
+async function load(id){
+ const html=CONTENT[id];content.innerHTML=html;
+ history.replaceState(null,'','#'+id);
+ document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('active',a.dataset.p===id));
+ await mermaid.run({querySelector:'.mermaid'});
+ window.scrollTo(0,0);
+}
+window.onhashchange=()=>load(location.hash.slice(1)||'index');
+load(location.hash.slice(1)||'index');
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.pyc
+artifacts/index/
+hf_cache/
+.venv/
+.pytest_cache/
+.DS_Store
+hf_cache/
+artifacts/index/
+__pycache__/
+*.pyc
+data/raw/insqabench/.cache/
