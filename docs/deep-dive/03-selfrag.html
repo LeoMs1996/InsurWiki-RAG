@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>③ Self-RAG 反思循环 · 深度实现</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="site"><div class="inner">
+  <span class="logo">InsurWiki-RAG · 深度实现文档</span>
+  <a href="index.html">总览</a>
+  <a href="01-data.html">①数据与切分</a>
+  <a href="02-retrieval.html">②混合检索</a>
+  <a class="cur" href="03-selfrag.html">③Self-RAG</a>
+  <a href="04-graphrag-wiki.html">④图谱与Wiki</a>
+  <a href="05-agent.html">⑤顾问Agent</a>
+  <a href="06-api-eval.html">⑥API与评测</a>
+</div></header>
+<div class="wrap">
+
+<h1>③ Self-RAG 反思循环（LangGraph 显式状态机）</h1>
+<p class="muted">源码：<code>src/insurwiki_rag/selfrag/graph.py</code>（234 行）。入口 <code>SelfRAGGraph.ask(query)</code>，被 <code>POST /api/chat</code> 调用。Self-RAG 论文的四个反思 token（[Retrieve?] [IsRelevant?] [IsSupported?] [IsUseful?]）在本项目里是<b>确定性的 Python 逻辑</b>而非让 LLM 输出 token——可控、零额外调用、可回放。</p>
+
+<h2>1. 状态机与条件路由</h2>
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> retrieve
+  retrieve --> grade_relevant
+  grade_relevant --> generate : relevant 非空
+  grade_relevant --> rewrite : relevant 为空
+  rewrite --> retrieve : 改写成功(retried=false) → 重检索一次
+  rewrite --> [*] : 改写后仍无 / 已重试 → refused
+  generate --> grade_supported
+  grade_supported --> compliance : 支撑率≥0.35
+  grade_supported --> compliance : 支撑率&lt;0.35 → 拒答改写
+  compliance --> grade_useful
+  grade_useful --> [*]
+</div>
+<pre><code>// 条件边的真实实现（_build 方法）
+"grade_relevant": lambda s: "rewrite" if not s.get("relevant") else "generate"
+"rewrite":        lambda s: END if s.get("refused") else "generate"</code></pre>
+<p>注意两个防环设计：改写循环<b>只允许一次</b>（<code>retried</code> 标志位）；<code>grade_supported → compliance</code> 无条件边——低支撑率不回炉重生成，而是直接把答案替换为标准拒答话术（金融场景宁可拒答不可误导）。</p>
+
+<h2>2. 逐节点输入输出</h2>
+
+<h3>节点① retrieve</h3>
+<p><span class="in">输入</span> state：<code>{"query": "等待期出险能赔吗"}</span>。若 <code>kg</code> 已加载，先做图谱查询（见④）拿 <code>graph_evidence</code>，其 chunk_ids 作为第三证据通道传入检索：<code>self.retriever.search(q, top_k=15, top_n=6, extra_channel=extra)</code>。</p>
+<p><span class="out">输出</span> state 增量（真实结构）：</p>
+<pre><code>{
+  "retrieve_decision": "[Retrieve?] yes",          // 无候选则 "[Retrieve?] no" + refused=true
+  "candidates": [ /* 6 个 chunk，结构见② */ ],
+  "graph_evidence": {"linked_entities": ["等待期"], "chunk_ids": ["c-9c02..."], "triples": [...]},
+  "reflection": [{"token": "[Retrieve?]", "value": "[Retrieve?] yes",
+                  "n_candidates": 6, "graph_linked_entities": ["等待期"]}]
+}</code></pre>
+<p class="muted">检索返回空时直接置 <code>refused=True</code>、答案固定为"依据不足：知识库中未检索到……"，后续所有 LLM 节点全部短路跳过——这是拒答的第一道闸。</p>
+
+<h3>节点② grade_relevant（[IsRelevant?]，无 LLM）</h3>
+<p>相关性判定是<b>分数阈值</b>而非 LLM 判断：rerank 分 &gt; 0.3 <b>或</b> RRF 分 ≥ 0.03 的候选算相关：</p>
+<pre><code>relevant = [c for c in cands if (c.get("rerank_score") or 0) > 0.3
+            or (c.get("rrf_score") or 0) >= 0.03]</code></pre>
+<p>两个阈值对应两种信号：rerank 分是 cross-encoder 的绝对相关性（0.3 大约是"确实在讲这个主题"），RRF 0.03 ≈ 双路都进前 5（1/62+1/64≈0.032），兜住"reranker 偏冷但双路共识强"的候选。</p>
+
+<h3>节点③ rewrite（Retrieve-again 循环）</h3>
+<p>仅当 <code>relevant</code> 为空且未重试过才触发。<span class="in">输入</span> <code>{"query": "猝死给不给钱"}</code> → LLM 改写 system prompt："你是保险领域检索查询改写器。把用户问题改写为更适合检索的包含关键词的完整句子……" → <span class="out">输出</span> <code>{"rewrite": "被保险人突发急性症状身故，保险合同是否承担身故保险金给付责任", "retried": true}</code>，随后<b>内联回调</b> <code>_node_retrieve</code> 用新查询重检索。</p>
+
+<h3>节点④ generate（带引用生成）</h3>
+<p><span class="in">输入</span>：relevant 前 5 条证据拼成编号块，图谱三元组（若有）作为受限上下文：</p>
+<pre><code>证据：
+[1] chunk_id=c-9c02fbfcf8（XX重疾险条款·第二十一条）
+被保险人因在等待期届满后……
+
+图谱证据（本体约束内，仅可引用，不得编造其外关系）：
+- 等待期 --约定期限--> 保险期间（被保险人在等待期届满后经指定医疗机…）</code></pre>
+<p>system prompt（原文）："你是严谨的保险条款助手。只依据给出的证据回答；引用证据时标注编号[n]；不得编造；若证据不足以回答，明确说'依据不足'。回答以「结论：」开头，先给结论再给条款依据。"</p>
+<p><span class="out">输出</span>：<code>state["answer"] = "结论：等待期内确诊不承担给付责任。[1] ……"</code></p>
+
+<h3>节点⑤ grade_supported（[IsSupported?]，支撑率算法核心）</h3>
+<p>这是 citation faithfulness 的代理指标——<b>逐句答案-证据字符二元组（bigram）覆盖率</b>，纯 Python 无 LLM：</p>
+<ol>
+<li>答案按 <code>(?&lt;=[。；！？])</code> 切句；</li>
+<li>全部证据拼成一个大字符串，收集其 bigram 集合 <code>ev_bigrams</code>；</li>
+<li>每句计算 <code>cover = 句内 bigram 落在 ev_bigrams 的比例</code>，<code>cover ≥ 0.5</code> 记为"有支撑"；</li>
+<li><code>support_score = 有支撑句数 / 总句数</code>，写入 reflection：<code>{"token":"[IsSupported?]", "value":"0.83", "detail":"5/6 句有证据支撑"}</code>。</li>
+</ol>
+<p><b>逐句演算示例</b>：答案句 <i>"免赔额为人民币100元。"</i> → bigrams {免赔,赔额,额为,为人,人民,民1,10,0元,...}。若证据原文含"免赔额……为人民币100元"，则"免赔/赔额/人民/民1..."等几乎全部命中，cover≈0.9 ≥ 0.5 → 该句有支撑。而幻觉句"保险公司将全额报销"中"全额/额报/报销"若不在任何证据里，cover 会跌到 0.2 以下 → 无支撑。</p>
+<div class="box warn"><b>拒答阈值</b>：<code>support_score &lt; SUPPORT_THRESHOLD(0.35)</code> 时强制拒答，答案替换为："依据不足：现有条款证据对问题的支撑度较低（支撑率 X%，低于阈值 35%），为避免误导不作答……"。这是拒答的第二道闸（第一道是检索为空，第三道是 generate 的 useful 检查）。</div>
+<p class="muted">为什么用 bigram 而不是词重叠：中文分词有边界歧义，二元字符组是分词无关的稳健词面度量，实现 3 行代码且可解释（每句给 x/y 计数）。</p>
+
+<h3>节点⑥ compliance（合规护栏）</h3>
+<ul>
+<li>敏感词表 <code>["保证收益","稳赚不赔","绝对安全","保本保息","理赔全赔"]</code> 命中则给答案追加警示（不删原文，保留审计痕迹）；</li>
+<li>无论是否拒答的<b>正常答案</b>都追加固定免责声明（DISCLAIMER，原文见源码 SENSITIVE_WORDS/DISCLAIMER 常量）；</li>
+<li>装配 <code>citations</code>：前 5 条 relevant → <code>{chunk_id, n(条款号), policy(合同名), excerpt(前80字), scores:{rrf, rerank, from_graph}}</code>，前端渲染成可点引用。</li>
+</ul>
+
+<h3>节点⑦ grade_useful（[IsUseful?]）</h3>
+<p>最终闸：<code>useful = ("依据不足" not in answer) and len(answer) > 20</code>。只是打标（写入 reflection 与最终 state），不再改变答案。</p>
+
+<h2>3. 一次 /api/chat 的完整输出示例</h2>
+<p><span class="in">输入</span>：<code>{"question": "等待期出险能赔吗"}</code></p>
+<p><span class="out">输出</span>（<code>ask()</code> 返回值，已剔除 candidates/relevant 中间态）：</p>
+<pre><code>{
+  "query": "等待期出险能赔吗",
+  "retrieve_decision": "[Retrieve?] yes",
+  "graph_evidence": {"linked_entities": ["等待期"], "chunk_ids": ["..."], "triples": [...]},
+  "answer": "结论：等待期内确诊不承担给付责任。[1] ……\n\n以上内容基于所引保险条款原文生成，仅供参考……",
+  "support_score": 0.8333,
+  "useful": true,
+  "refused": false,
+  "citations": [{"chunk_id": "c-9c02fbfcf8", "n": "第二十一条",
+                 "policy": "XX重大疾病保险条款", "excerpt": "……",
+                 "scores": {"rrf": 0.0492, "rerank": 0.71, "from_graph": true}}],
+  "reflection": [
+    {"token": "[Retrieve?]",  "value": "[Retrieve?] yes", "n_candidates": 6, ...},
+    {"token": "[IsRelevant?]", "value": "yes", "detail": ["c-9c02...", ...]},
+    {"token": "[IsSupported?]", "value": "0.83", "detail": "5/6 句有证据支撑"},
+    {"token": "[IsUseful?]",  "value": "yes"}
+  ],
+  "latency_ms": 4210,
+  "model": "glm-5.3"
+}</code></pre>
+
+<h2>4. LLM 层的容错（llm.py 支撑细节）</h2>
+<ul>
+<li>Anthropic 兼容端点：<code>POST {base}/v1/messages</code>，头 <code>x-api-key</code> + <code>anthropic-version: 2023-06-01</code>，payload 显式 <code>"thinking": {"type": "disabled"}</code> 防止思考块吃掉 max_tokens；</li>
+<li><b>模型降级</b>：glm-5.3 调用抛 LLMError（如 HTTP 1113）→ 自动切 <code>glm-4.6</code> 重试一次，并把 <code>active_model</code> 固化为降级模型（后续调用不再浪费一次失败）；</li>
+<li><code>chat_json</code>：在 system 尾部追加强制 JSON 指令 + <code>_strip_fences</code> 剥 ``` 围栏后 <code>json.loads</code>，供图谱抽取与意图分类复用。</li>
+</ul>
+
+<footer>③/⑥ · 上一页：<a href="02-retrieval.html">混合检索</a> · 下一页：<a href="04-graphrag-wiki.html">图谱与Wiki</a></footer>
+</div>
+<script src="../html/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true, theme:"neutral", flowchart:{curve:"basis"}});</script>
+</body>
+</html>

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>⑤ 保险顾问 Agent · 深度实现</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="site"><div class="inner">
+  <span class="logo">InsurWiki-RAG · 深度实现文档</span>
+  <a href="index.html">总览</a>
+  <a href="01-data.html">①数据与切分</a>
+  <a href="02-retrieval.html">②混合检索</a>
+  <a href="03-selfrag.html">③Self-RAG</a>
+  <a href="04-graphrag-wiki.html">④图谱与Wiki</a>
+  <a class="cur" href="05-agent.html">⑤顾问Agent</a>
+  <a href="06-api-eval.html">⑥API与评测</a>
+</div></header>
+<div class="wrap">
+
+<h1>⑤ LangGraph 保险顾问 Agent（多轮 + 工具 + 人工确认）</h1>
+<p class="muted">源码：<code>src/insurwiki_rag/agent/advisor.py</code>（330 行）。入口 <code>AdvisorAgent.chat(session_id, user_input, confirmed_intent, on_event)</code>，被 <code>POST /api/agent/chat</code> 与流式端点调用。</p>
+
+<h2>1. 状态机</h2>
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> intent : LLM 意图分类（rag/graph/calc/chat + confidence）
+  intent --> synthesize : need_human（低置信/模糊输入 → 挂起提问）
+  intent --> tools : 正常路由
+  tools --> synthesize : 流式生成（on_event 时逐 delta 回调）
+  synthesize --> compliance : 敏感词检查 + 免责声明 + 写入会话记忆
+  compliance --> [*]
+</div>
+<pre><code>// 条件边（_build）
+"intent": lambda s: "synthesize" if s.get("need_human") else "tools"</code></pre>
+
+<h2>2. 意图识别（_n_intent）</h2>
+<p>分类器 prompt（INTENT_SYSTEM 原文要点）要求输出 <code>{"intent":"rag|graph|calc|chat","confidence":0~1,"reason":"..."}</code>。输入包含最近 4 条对话历史（每条截 80 字），<code>chat_json</code> 解析。LLM 失败时兜底 <code>{"intent":"rag","confidence":0.5,"reason":"fallback"}</code>。</p>
+<p><span class="in">示例输入</span>：<code>{"message": "30万保额，费率0.0025，保费多少钱"}</code> →</p>
+<p><span class="out">示例输出</span>：<code>{"intent": "calc", "confidence": 0.9, "reason": "包含保额与费率的数值计算请求"}</code></p>
+<div class="box warn"><b>Human-in-the-loop 触发条件</b>（二选一即挂起）：① <code>confidence &lt; LOW_CONFIDENCE(0.55)</code>；② 输入是"模糊指代"——长度 &lt;8 字符或匹配 <code>那个|这个|嗯|随便|帮我看看</code>。挂起时 synthesize 直接把确认问题作为回答返回，工具不执行、会话记忆不写入，等用户带 <code>confirmed_intent</code> 重入。</p></div>
+
+<h2>3. 工具层（ToolBox，五个工具）</h2>
+<table>
+<tr><th>工具</th><th>实现</th><th>示例输入 → 输出</th></tr>
+<tr><td><code>rag_search</code></td><td>复用②的 HybridRetriever.search（含图谱第三通道），返回精简 chunk 列表</td><td><span class="in">{query:"等待期多久", top_n:5}</span> → <span class="out">[{chunk_id, policy, section, text(截200字), scores:{rrf, rerank}} ×5]</span></td></tr>
+<tr><td><code>graph_query</code></td><td>转发 <code>kg.query</code>（见④）</td><td><span class="in">{query:"免赔额"}</span> → <span class="out">{linked_entities, chunk_ids, triples}</span></td></tr>
+<tr><td><code>wiki_lookup</code></td><td>读 <code>artifacts/wiki/index.json</code>，title+overview+keywords 子串匹配，取前 5</td><td><span class="in">{keyword:"免赔额"}</span> → <span class="out">[{topic_id:"T免赔额", title, overview, file}]</span></td></tr>
+<tr><td><code>calculator</code></td><td><b>AST 白名单安全求值</b>（见下）</td><td><span class="in">{expression:"300000*0.0025"}</span> → <span class="out">{expression:"300000*0.0025", result:750.0}</span></td></tr>
+<tr><td><code>compliance_check</code></td><td>复用③的敏感词表与免责声明</td><td><span class="in">{text:"本产品保本保息"}</span> → <span class="out">{sensitive_words:["保本保息"], disclaimer:"…"}</span></td></tr>
+</table>
+
+<h3>安全计算器：为什么用 AST 而不是 eval</h3>
+<pre><code>def _safe_eval(expr):
+    node = ast.parse(expr, mode="eval")
+    allowed = (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Num,
+               ast.Add, ast.Sub, ast.Mult, ast.Div, ast.USub, ast.UAdd, ast.Mod)
+    for n in ast.walk(node):
+        if not isinstance(n, allowed):
+            raise ValueError(f"illegal token: {ast.dump(n)}")   # 名字调用/属性访问一律拒绝
+    return float(eval(compile(node, "", "eval")))</code></pre>
+<p>LLM 产出的表达式是不可信输入；先解析成 AST、白名单校验节点类型后才求值，<code>__import__("os")</code> 之类在 Name/Call 节点这一关就被拒绝。calc 分支还会先做<b>口语归一化</b>：<code>万→*10000</code>、<code>×÷xX</code>→<code>*/</code>、<code>%→/100</code>，再用正则提取"数值 费率%"两个操作数拼成 <code>保额*费率</code>（<code>"30万保额费率0.25%" → "300000*0.25/100"</code>）。</p>
+
+<h2>4. 工具编排（_n_tools 按意图路由）</h2>
+<ul>
+<li><b>rag</b>：必调 rag_search；若 graph_query 命中三元组则追加一次 graph_query（图谱证据进生成上下文）；</li>
+<li><b>graph</b>：只调 graph_query；</li>
+<li><b>calc</b>：只调 calculator；</li>
+<li><b>chat</b>：不调工具（synthesize 用轻量闲聊 prompt）。</li>
+</ul>
+<p>工具异常不炸图：<code>ToolBox.run</code> 捕获一切异常返回 <code>{"error": ...}</code>，错误信息本身作为工具结果交给 LLM 解释。</p>
+
+<h2>5. 综合生成（_n_synthesize）</h2>
+<p><span class="in">输入</span>：最近 4 条历史（各截 60 字）+ 用户输入 + 工具结果 JSON（截 3000 字）。system prompt 按意图三选一：rag/graph 用严格版（"只依据工具返回的条款/图谱证据回答…以「结论：」开头；引用格式 [条款号/合同名]"），calc 要求基于计算结果解读费率含义，chat 是简短友好回应。</p>
+<p><b>流式</b>：注册了 <code>on_event</code> 时改用 <code>llm.chat_stream</code>，每收到一个 SSE 文本增量就 <code>_emit("delta", {"text": delta})</code>；引用（citations）从工具结果中的 chunk_id 列表提取前 5 条。</p>
+
+<h2>6. 合规与会话记忆（_n_compliance）</h2>
+<p>答案过一遍敏感词检查（命中则追加合规提示），统一追加免责声明，然后<b>把本轮 user/assistant 两条消息写入 SessionStore</b>——内存字典，每会话保留最近 <code>max_turns*2=16</code> 条消息，接口设计可直接替换 Redis。注意：挂起确认轮（need_human）<b>不写记忆</b>，避免未完成的对话污染上下文。</p>
+
+<h2>7. Human-in-the-loop 完整往返示例</h2>
+<pre><code># 轮 1：模糊输入触发挂起
+POST /api/agent/chat {"session_id":"s1","message":"帮我看看那个"}
+→ {"intent":{"intent":"rag","confidence":0.40,"reason":"输入含模糊指代"},
+   "need_human":true,
+   "answer":"您是想咨询保险条款知识（rag）、实体关系（graph）、还是保费/保额计算（calc）？当前识别为「rag」（置信度 0.40），请确认。",
+   "pending_confirmation":{"guessed_intent":"rag"}}
+
+# 轮 2：用户确认后重入（reason=user-confirmed 跳过 LLM 重判）
+POST /api/agent/chat {"session_id":"s1","message":"等待期出险","confirmed_intent":"rag"}
+→ 正常走 intent(直通)→tools(rag_search+graph_query)→synthesize→compliance 全链路</code></pre>
+
+<h2>8. 事件流（on_event 协议）</h2>
+<p><code>chat(..., on_event=cb)</code> 存在时按序发出：<code>intent</code> →（<code>tools</code>：tool_calls + 截 1200 字的 tool_results）→ <code>delta</code>×N → <code>citations</code> → <code>done</code>（完整结果对象）。事件回调抛异常只记日志不影响主流程（<code>_emit</code> 内部捕获）。这个协议直接映射为⑥的 SSE 端点。</p>
+
+<footer>⑤/⑥ · 上一页：<a href="04-graphrag-wiki.html">图谱与Wiki</a> · 下一页：<a href="06-api-eval.html">API与评测</a></footer>
+</div>
+<script src="../html/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true, theme:"neutral", flowchart:{curve:"basis"}});</script>
+</body>
+</html>

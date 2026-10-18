@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>深度实现文档 · InsurWiki-RAG</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="site"><div class="inner">
+  <span class="logo">InsurWiki-RAG · 深度实现文档</span>
+  <a class="cur" href="index.html">总览</a>
+  <a href="01-data.html">①数据与切分</a>
+  <a href="02-retrieval.html">②混合检索</a>
+  <a href="03-selfrag.html">③Self-RAG</a>
+  <a href="04-graphrag-wiki.html">④图谱与Wiki</a>
+  <a href="05-agent.html">⑤顾问Agent</a>
+  <a href="06-api-eval.html">⑥API与评测</a>
+</div></header>
+<div class="wrap">
+
+<h1>深度实现文档（Deep Dive）</h1>
+<p class="muted">本套文档是 <code>docs/html/</code> 流程文档站的补充：聚焦<b>每个技术点怎么实现、为什么这样实现</b>，所有步骤均给出<b>真实示例输入 / 输出</b>（示例数据取自本仓库 <code>data/processed/</code>、<code>artifacts/</code> 中的实际产物），关键参数与源码文件一一对应，可对照 <code>src/insurwiki_rag/</code> 逐行核验。</p>
+
+<div class="box note"><b>阅读前提</b>：先读 <code>docs/html/index.html</code> 了解项目全貌，再用本套文档下钻。两套文档互不替代：流程站回答"是什么、走哪条路"，本站回答"怎么做的、数据长什么样"。</div>
+
+<h2>技术栈与实现选型</h2>
+<table>
+<tr><th>环节</th><th>技术</th><th>实现位置</th><th>为什么不用别的</th></tr>
+<tr><td>LLM 调用</td><td>GLM glm-5.3（Anthropic 兼容协议，urllib 零 SDK），失败自动降级 glm-4.6</td><td><code>src/insurwiki_rag/llm.py</code>（217 行）</td><td>Coding Plan 套餐走 Anthropic 端点；零 SDK 避免 anthropic 包版本耦合</td></tr>
+<tr><td>Embedding</td><td>BAAI/bge-small-zh-v1.5，本地 sentence-transformers，归一化后 512 维</td><td><code>retrieval/hybrid.py · Embedder</code></td><td>本地跑不花 API 费、中文效果好于同体量 multilingual 模型</td></tr>
+<tr><td>稀疏检索</td><td>rank_bm25 <code>BM25Okapi</code> + jieba 分词</td><td><code>retrieval/hybrid.py · BM25Store/tokenize</code></td><td>条款含大量编号/专名，BM25 精确词面匹配是向量检索的互补</td></tr>
+<tr><td>融合</td><td>RRF（Reciprocal Rank Fusion，k=60）</td><td><code>retrieval/hybrid.py · rrf_fuse</code></td><td>无需调分数尺度，两路异构分数（余弦 0~1 vs BM25 无界）直接按排名融合</td></tr>
+<tr><td>精排</td><td>BAAI/bge-reranker-v2-m3 cross-encoder（max_length=512）</td><td><code>retrieval/hybrid.py · Reranker</code></td><td>cross-encoder 看 query-doc 联合语义，比 bi-encoder 余弦更准</td></tr>
+<tr><td>编排</td><td>LangGraph <code>StateGraph</code>（两个状态机：SelfRAGGraph / AdvisorAgent）</td><td><code>selfrag/graph.py</code>、<code>agent/advisor.py</code></td><td>显式状态机 + 条件边，反思循环可审计、可回放</td></tr>
+<tr><td>图谱</td><td>networkx MultiDiGraph，8 类实体 / 8 类关系本体约束，node-link JSON 持久化</td><td><code>graphrag/kg.py</code></td><td>千级节点嵌入内存图够用，不引入图数据库</td></tr>
+<tr><td>服务</td><td>FastAPI，惰性 bootstrap，SSE 流式</td><td><code>server/main.py</code></td><td>—</td></tr>
+</table>
+
+<h2>全链路数据形态一图流</h2>
+<div class="mermaid">
+flowchart LR
+  subgraph RAW["数据层 data/"]
+    A1["InsQABench clause_train.json<br/>31958 条原始记录"] --> A2["qa_triples.jsonl<br/>1500 条 &lt;Q,A,Evidence&gt;"]
+    A2 --> A3["corpus_docs.jsonl<br/>454 份合同 / 1426 片段"]
+  end
+  subgraph IDX["索引层 artifacts/index/"]
+    B1["chunks.jsonl<br/>结构感知切分 chunk"]
+    B2["embeddings.npy<br/>N×512 float32"]
+  end
+  subgraph GRA["图谱层 artifacts/graph/"]
+    C1["kg.json<br/>1633 节点 / 1087 边"]
+  end
+  subgraph WIK["沉淀层 artifacts/wiki/"]
+    D1["25 个 Wiki 页 .md + index.json"]
+  end
+  A3 --> B1 --> B2
+  B1 --> C1
+  C1 --> D1
+  D1 -- "wiki chunk 回灌" --> B1
+  B2 & C1 --> E1["SelfRAGGraph /api/chat"]
+  B2 & C1 & D1 --> E2["AdvisorAgent /api/agent/chat"]
+</div>
+
+<h2>本套文档结构</h2>
+<table>
+<tr><th>#</th><th>文档</th><th>覆盖源码</th><th>你将看到</th></tr>
+<tr><td>①</td><td><a href="01-data.html">数据获取与结构感知切分</a></td><td><code>data/pipeline.py</code>、<code>chunking/structure_aware.py</code></td><td>instruction 正则解析的真实输入输出、去重指纹算法、条-款-项切分逐 chunk 示例、表格 KV 序列化</td></tr>
+<tr><td>②</td><td><a href="02-retrieval.html">混合检索：BM25+向量+RRF+Rerank</a></td><td><code>retrieval/hybrid.py</code></td><td>一次真实查询的双路分数表、RRF 手工计算演示、rerank 前后排名变化、索引文件格式</td></tr>
+<tr><td>③</td><td><a href="03-selfrag.html">Self-RAG 反思循环</a></td><td><code>selfrag/graph.py</code></td><td>7 节点状态机逐节点输入输出、反思 token 轨迹 JSON、支撑率 bigram 算法逐句演算、拒答阈值</td></tr>
+<tr><td>④</td><td><a href="04-graphrag-wiki.html">GraphRAG 本体约束与 Wiki 沉淀</a></td><td><code>graphrag/kg.py</code>、<code>wiki/sediment.py</code></td><td>本体定义、抽取 prompt 与真实返回、实体链接 1-hop 查询示例、Wiki 页生成与回灌闭环</td></tr>
+<tr><td>⑤</td><td><a href="05-agent.html">保险顾问 Agent</a></td><td><code>agent/advisor.py</code></td><td>意图路由 prompt 与返回、五工具真实输出、AST 安全计算器、HITL 挂起与确认、多轮记忆</td></tr>
+<tr><td>⑥</td><td><a href="06-api-eval.html">API、SSE 流式与评测</a></td><td><code>server/main.py</code>、<code>scripts/evaluate.py</code></td><td>全部路由 curl 输入/输出示例、SSE 事件逐条样例、Hit@5 判据算法、实测指标解读</td></tr>
+</table>
+
+<h2>复现环境速查</h2>
+<pre><code># 一条命令跑通：拉取→清洗→切分→索引→图谱→Wiki（首次约需下载 3 万条数据 + 2 个本地模型）
+.venv/bin/python scripts/pipeline.py
+
+# 只重建索引/图谱/Wiki（复用已处理数据）
+.venv/bin/python scripts/pipeline.py --skip-data
+
+# 起服务（默认 8010，工作台 / 流程文档 / 本文档站）
+.venv/bin/python -m uvicorn insurwiki_rag.server.main:app --port 8010 --app-dir src
+
+# 评测
+.venv/bin/python scripts/evaluate.py --n 60        # Hit@5 + 支撑率 + 拒答率
+.venv/bin/python -m pytest tests/ -q</code></pre>
+
+<div class="box tip"><b>关键配置</b>（<code>src/insurwiki_rag/config.py</code>，均可由 <code>.env</code> 覆盖）：
+<code>RRF_K=60</code> · <code>RERANK_TOP_N=5</code> · <code>SUPPORT_THRESHOLD=0.35</code>（拒答阈值） · <code>DATA_SAMPLE=1500</code> · 切分 <code>MAX_CHARS=420 / OVERLAP_CHARS=60</code> · <code>LLM_MODEL=glm-5.3</code> 降级 <code>glm-4.6</code>。</div>
+
+<footer>InsurWiki-RAG 深度实现文档 · 基于 src/ 源码与 artifacts/ 实测产物编写 · 离线可用（Mermaid 为本地 ../html/mermaid.min.js）</footer>
+</div>
+<script src="../html/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true, theme:"neutral", flowchart:{curve:"basis"}});</script>
+</body>
+</html>

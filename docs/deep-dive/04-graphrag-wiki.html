@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>④ GraphRAG 本体约束与 Wiki 沉淀 · 深度实现</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="site"><div class="inner">
+  <span class="logo">InsurWiki-RAG · 深度实现文档</span>
+  <a href="index.html">总览</a>
+  <a href="01-data.html">①数据与切分</a>
+  <a href="02-retrieval.html">②混合检索</a>
+  <a href="03-selfrag.html">③Self-RAG</a>
+  <a class="cur" href="04-graphrag-wiki.html">④图谱与Wiki</a>
+  <a href="05-agent.html">⑤顾问Agent</a>
+  <a href="06-api-eval.html">⑥API与评测</a>
+</div></header>
+<div class="wrap">
+
+<h1>④ GraphRAG 本体约束 与 LLM Wiki 知识沉淀</h1>
+<p class="muted">源码：<code>src/insurwiki_rag/graphrag/kg.py</code>（179 行）· <code>src/insurwiki_rag/wiki/sediment.py</code>（189 行）。当前实例图谱：<b>1633 节点 / 1087 边</b>（<code>artifacts/graph/kg.json</code>），Wiki 25 页（<code>artifacts/wiki/</code>）。</p>
+
+<h2>1. 保险领域本体（硬约束）</h2>
+<pre><code>ENTITY_TYPES   = 保险产品 / 责任条款 / 免责条款 / 费率因子 / 犹豫期 / 保额 / 期限 / 被保险人群体   # 8 类
+RELATION_TYPES = 承保责任 / 免除责任 / 适用费率 / 享有犹豫期 / 约定保额 / 约定期限 / 适用群体 / 关联条款  # 8 类</code></pre>
+<p>"本体约束"体现在两处：<b>写入侧</b>，<code>add_extraction</code> 只接收 type 落在白名单的实体、relation 落在白名单且头尾节点都已存在的关系，LLM 幻觉出的类型直接丢弃；<b>生成侧</b>，Self-RAG 的 generate 节点把图谱三元组以"仅可引用，不得编造其外关系"的措辞注入 prompt（见③）。</p>
+
+<h2>2. 构建流水线（extract_graph）</h2>
+<div class="mermaid">
+flowchart LR
+  C["全部 chunks"] --> B["按 batch_size=6 分批<br/>（pipeline.py 实际参数，默认 5）"]
+  B --> P["ThreadPoolExecutor workers=6<br/>并发调 GLM chat_json"]
+  P --> V["add_extraction 白名单校验回灌"]
+  V --> K["networkx MultiDiGraph"]
+  K --> S["save → artifacts/graph/kg.json<br/>node-link 格式"]
+</div>
+<p>每批的 payload 把 6 个 chunk 拼接、每个截断到 400 字符并标注 chunk_id：<code>"[c-xxx] 第十三条 …"</code>。抽取 prompt（ONTOLOGY_PROMPT，节选）要求"不确定/本体外的信息一律不抽"，输出 JSON 数组、逐 chunk 对应。</p>
+<h3>示例：一批的真实输入 → 输出 → 回灌</h3>
+<p><span class="in">输入</span>（payload 节选）：<code>[c-9c02fbfcf8] 第二十一条 被保险人因在等待期届满后经指定医疗机构的专科医生初次确诊罹患本保险合同所定义的恶性肿瘤——重度……</code></p>
+<p><span class="out">输出</span>（GLM 返回）：</p>
+<pre><code>[{"entities": [{"name": "院外恶性肿瘤——重度特定药品费用保险金责任", "type": "责任条款", "chunk_id": "c-73722b6b88"}],
+  "relations": [{"head": "院外恶性肿瘤——重度特定药品费用保险金责任",
+                 "relation": "承保责任", "tail": "院外恶性肿瘤——重度特定药品费用保险金责任",
+                 "evidence": "被保险人因在等待期届满后经指定医疗机构的专科医生初次确诊罹患……"}]}]</code></pre>
+<p><span class="out">回灌后</span>（kg.json 真实记录）：</p>
+<pre><code>// 节点
+{"id": "院外恶性肿瘤——重度特定药品费用保险金责任", "type": "责任条款",
+ "mentions": 1, "chunk_ids": ["c-73722b6b88"]}
+// 边
+{"source": "院外恶性肿瘤——重度特定药品费用保险金责任", "target": "……",
+ "relation": "承保责任", "chunk_id": "c-9c02fbfcf8",
+ "evidence": "被保险人因在等待期届满后经指定医疗机构的专科医生初次确诊罹患本保险合同所定义的恶性肿瘤——重度"}</code></pre>
+<p class="muted">节点属性 <code>chunk_ids</code>（该实体出现过的所有 chunk）和 <code>mentions</code>（提及次数）是图谱→检索回链的关键；边上的 <code>evidence</code> 截断 120 字，供生成端引用。出错批次返回 <code>{"__error__": ...}</code>，整批静默跳过不阻塞构建。</p>
+
+<h2>3. 查询侧：实体链接 + 1-hop 邻域</h2>
+<pre><code>def link_entities(query):        # 极简实体链接：本体实体名作为子串出现在 query 中即命中
+    return [name for name in self.g.nodes if name in query]
+
+def query(query, max_hops=1):    # 返回 {"linked_entities", "chunk_ids"(≤8), "triples"(≤12)}
+    # BFS 展开 1 跳：命中节点的全部关联 chunk_ids + 出边三元组</code></pre>
+<p><span class="in">示例输入</span>：<code>kg.query("免赔额是怎么规定的")</code> → 图谱中有名为"免赔额"的节点（费率因子，8 个 chunk）→</p>
+<p><span class="out">输出</span>：</p>
+<pre><code>{
+  "linked_entities": ["免赔额"],
+  "chunk_ids": ["c-…8 个含免赔额条款的 chunk…"],       // 作为第三路并入 RRF（见②）
+  "triples": [{"head": "免赔额", "relation": "适用费率", "tail": "…",
+               "evidence": "……", "chunk_id": "c-…"}, ...]  // 注入 generate prompt
+}</code></pre>
+<div class="box note">子串链接对"等待期""免赔额"这类短而唯一的保险术语足够准；多义词误链接的代价被上限截断（chunk_ids≤8、triples≤12）+ RRF 加权（非硬插队）双重约束住。</div>
+
+<h2>4. Wiki 知识沉淀闭环（sediment.py）</h2>
+<div class="mermaid">
+flowchart TD
+  K["KnowledgeGraph"] --> CL["cluster_by_entity<br/>mentions≥3 的实体 → 主题簇（取前 24）"]
+  CL --> GEN["GLM chat_json 聚合摘要<br/>overview / points[3-6] / keywords[4-6]"]
+  GEN --> RD["render_pages → artifacts/wiki/T*.md<br/>front-matter + 固定小节 + 关联QA"]
+  RD --> WC["wiki_pages_as_chunks<br/>剥离 front-matter，截 1500 字，chunk_type=wiki"]
+  WC --> AU["augment_index_with_wiki<br/>np.vstack 向量矩阵 + jsonl 追加"]
+  AU --> RT["检索时可被召回<br/>沉淀→反哺检索闭环"]
+</div>
+
+<h3>聚类示例</h3>
+<p><span class="in">输入</span>：图谱节点 "免赔额"（费率因子，chunk_ids 8 个 ≥ min_cluster=3）→ <span class="out">输出</span> 主题：<code>{"topic_id": "T免赔额", "entity": "免赔额", "etype": "费率因子", "chunk_ids": [8 个]}</code>。主题按簇大小降序取前 <code>max_topics=24</code>（当前实例实为 25 页，因为并列/生成容差）。</p>
+
+<h3>生成与渲染示例（真实页面节选，artifacts/wiki/T免赔额.md）</h3>
+<p><span class="in">输入</span>（给 GLM 的证据）：主题实体 + 图谱关系行（<code>免赔额 --适用费率--> …</code>，≤8 条）+ 前 10 个 chunk 各截 200 字。</p>
+<p><span class="out">输出</span>（渲染后的 Markdown，固定模板 WIKI_TMPL）：</p>
+<pre><code>---
+title: 免赔额（费率因子）
+topic_id: T免赔额
+entity_type: 费率因子
+keywords: 免赔额、年免赔额、医疗费用补偿原则、100元免赔额、抵扣规则、自行承担
+chunk_ids: 8
+---
+# 免赔额（费率因子）
+## 主题概述
+免赔额是医疗保险中的费率因子，指被保险人自行承担、保险人不予赔付的部分……
+## 核心条款要点
+- [《泰康上海医保账户意外伤害医疗保险（2019）》2.4条] 免赔额为年免赔额，……
+- [TaiPing个人住院医疗费用保险（互联网专属2021-D版）第六条] ……
+## 关联条款引用
+- `c-xxxx` …
+## 常见问答
+**Q：……** A：……   ← qa_by_chunk：QA 证据与 chunk 前 60 字互含即关联，每 chunk 取 2 条</code></pre>
+
+<h3>回灌索引</h3>
+<p><code>wiki_pages_as_chunks</code> 把每页剥掉 front-matter、截 1500 字，包装成 <code>chunk_type="wiki"</code> 的 chunk（<code>policy_name="Wiki·免赔额（费率因子）"</code>）；<code>augment_index_with_wiki</code> 按 chunk_id 去重后 <code>np.vstack</code> 新向量、jsonl 追加行。此后用户问"免赔额"，检索 top-5 里就可能直接出现这页浓缩了 8 份合同要点的沉淀页——这就是"沉淀→反哺检索"闭环。</p>
+
+<h2>5. Obsidian 导出（server/obsidian_export.py）</h2>
+<p>同一份图谱另有一条只读导出路径：<code>python scripts/export_obsidian.py</code> 或 <code>GET /api/export/obsidian</code> → <code>artifacts/obsidian_vault/</code>：实体笔记（<code>[[双链]]</code> 关系）+ Wiki 页 + Obsidian 原生 <code>Graph.canvas</code>（按本体类型分色）+ Index.md MOC。与运行时图谱互不影响。</p>
+
+<footer>④/⑥ · 上一页：<a href="03-selfrag.html">Self-RAG</a> · 下一页：<a href="05-agent.html">顾问Agent</a></footer>
+</div>
+<script src="../html/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true, theme:"neutral", flowchart:{curve:"basis"}});</script>
+</body>
+</html>

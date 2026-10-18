@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>⑥ API、SSE 流式与评测 · 深度实现</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="site"><div class="inner">
+  <span class="logo">InsurWiki-RAG · 深度实现文档</span>
+  <a href="index.html">总览</a>
+  <a href="01-data.html">①数据与切分</a>
+  <a href="02-retrieval.html">②混合检索</a>
+  <a href="03-selfrag.html">③Self-RAG</a>
+  <a href="04-graphrag-wiki.html">④图谱与Wiki</a>
+  <a href="05-agent.html">⑤顾问Agent</a>
+  <a class="cur" href="06-api-eval.html">⑥API与评测</a>
+</div></header>
+<div class="wrap">
+
+<h1>⑥ FastAPI 服务、SSE 流式 与 评测体系</h1>
+<p class="muted">源码：<code>src/insurwiki_rag/server/main.py</code>（182 行）· <code>scripts/evaluate.py</code>（94 行）· <code>tests/</code></p>
+
+<h2>1. 惰性启动（_bootstrap）</h2>
+<p>FastAPI 进程起来时<b>不</b>加载任何模型；第一个请求触发 <code>_bootstrap()</code>：<code>load_index()</code>（npy 矩阵 + chunks + jieba 重分词）→ <code>KnowledgeGraph.load()</code>（若 kg.json 存在）→ 组装 <code>SelfRAGGraph</code> 与 <code>AdvisorAgent</code> 单例存入 <code>_state</code> dict。好处：`uvicorn` 秒起、健康检查不阻塞、显存/内存只在真正有流量时占用。</p>
+
+<h2>2. 路由总表（含 curl 输入/输出）</h2>
+<table>
+<tr><th>路由</th><th>输入</th><th>输出（关键字段）</th></tr>
+<tr><td><code>GET /health</code></td><td>—</td><td><code>{"status":"ok","model":"glm-5.3","indexed":N}</code>（indexed 为 chunk 总数，含 wiki 回灌）</td></tr>
+<tr><td><code>POST /api/chat</code></td><td><code>{"question":"等待期出险能赔吗"}</code></td><td>③的完整 ask() 结果：answer / support_score / reflection / citations / refused / latency_ms</td></tr>
+<tr><td><code>GET /api/search?q=&top_n=</code></td><td>查询串</td><td>②的 chunk 列表（rerank_score 降序）</td></tr>
+<tr><td><code>GET /api/graph</code></td><td>—</td><td><code>{nodes(≤400), edges(≤600), nodes/edges 计数, entity_types 分布, relation_types 分布}</code></td></tr>
+<tr><td><code>GET /api/graph?entity=免赔额</code></td><td>实体名</td><td>④的 query() 结果：linked_entities / chunk_ids / triples</td></tr>
+<tr><td><code>GET /api/wiki</code> / <code>/api/wiki/T免赔额</code></td><td>—</td><td>index.json 页列表 / <code>{"topic_id", "markdown"}</code>（原始 md 文本）</td></tr>
+<tr><td><code>GET /api/export/obsidian</code></td><td>—</td><td>InsurWiki-Obsidian.zip 文件流</td></tr>
+<tr><td><code>POST /api/agent/chat</code></td><td><code>{"session_id","message","confirmed_intent"?}</code></td><td>⑤的完整结果：intent / tool_calls / tool_results / answer / citations / need_human</td></tr>
+<tr><td><code>POST /api/agent/chat/stream</code></td><td>同上</td><td>SSE 流（见下）</td></tr>
+</table>
+
+<h2>3. SSE 流式端点的实现与事件样例</h2>
+<p>实现要点：Agent 在<b>后台线程</b>跑，事件塞进 <code>queue.Queue</code>，生成器主线程逐个取出并以 <code>event: &lt;type&gt;\ndata: &lt;json&gt;\n\n</code> 格式 yield；worker 结束放 <code>None</code> 哨兵关流；响应头带 <code>X-Accel-Buffering: no</code> 防反向代理缓冲。</p>
+<p><span class="in">输入</span>：</p>
+<pre><code>curl -N -X POST http://127.0.0.1:8010/api/agent/chat/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"demo","message":"等待期出险能赔吗"}'</code></pre>
+<p><span class="out">输出</span>（事件按真实顺序逐条）：</p>
+<pre><code>event: intent
+data: {"intent":"rag","confidence":0.92,"reason":"询问等待期保险责任条款"}
+
+event: tools
+data: {"tool_calls":[{"tool":"rag_search","args":{"query":"等待期出险能赔吗","top_n":5}},
+                    {"tool":"graph_query","args":{"query":"等待期出险能赔吗"}}],
+       "tool_results":"[{\"chunk_id\":\"c-9c02...\",...}]"}   // 截 1200 字
+
+event: delta
+data: {"text":"结论"}
+
+event: delta
+data: {"text":"：等待期内确诊不承担……"}        // × N 个增量
+
+event: citations
+data: {"citations":[{"chunk_id":"c-9c02fbfcf8","n":"第二十一条","policy":"XX重疾险","excerpt":"……"}]}
+
+event: done
+data: {"session_id":"demo","intent":{...},"answer":"……完整答案…","latency_ms":5230,"model":"glm-5.3"}</code></pre>
+<p class="muted">LLM 侧的流式来自 <code>chat_stream</code>：逐行读上游 SSE，兼容 Anthropic <code>content_block_delta/text_delta</code> 与 OpenAI <code>choices[0].delta.content</code> 两种事件格式；首个增量前失败仍可自动降级 fallback 模型。</p>
+
+<h2>4. 评测体系（scripts/evaluate.py）</h2>
+<div class="mermaid">
+flowchart LR
+  T["qa_triples.jsonl<br/>1500 条"] --> S["random.Random(7).sample N=60<br/>（与切分采样的 seed=42 不同流）"]
+  S --> H["Hit@5：retriever.search(question)<br/>top-5 是否命中 gold evidence"]
+  S --> L["支撑率/拒答率：前 20 条走<br/>完整 SelfRAG.ask() 记 support_score/refused"]
+  H & L --> R["artifacts/eval/report.json"]
+</div>
+
+<h3>Hit@5 判据（evidence_hit，两段式）</h3>
+<ol>
+<li><b>严格判据</b>：任一 top-5 chunk 与证据文本<b>前 60 字符互含</b>（<code>c.text[:60] in evidence or evidence[:60] in c.text</code>）→ 命中；</li>
+<li><b>宽松兜底</b>：严格未中时，任一 chunk 的 bigram 与证据 bigram 重叠率 ≥ 0.6 也算命中——因为结构感知切分会给 chunk 加"第X条(续)"前缀、带 overlap，前 60 字可能不是证据开头。</li>
+</ol>
+
+<h3>实测指标（artifacts/eval/report.json，n=60）</h3>
+<table>
+<tr><th>指标</th><th>值</th><th>含义与解读</th></tr>
+<tr><td>Hit@5</td><td><b>75%</b></td><td>四分之三的问题，正确条款进 top-5。未命中的 25% 主要是"申请理赔要哪些步骤"这类<b>跨条款流程型问题</b>（证据分散在多个 chunk，单一 chunk 覆盖不全）</td></tr>
+<tr><td>支撑率均值</td><td><b>68.6%</b></td><td>答案句子约 2/3 有证据词面支撑；这是③的 bigram 代理指标，偏保守（合规话术/免责声明句天然无证据覆盖）</td></tr>
+<tr><td>拒答率</td><td><b>15%</b></td><td>检索为空或支撑率 &lt; 35% 触发拒答——金融场景的"宁拒不猜"</td></tr>
+</table>
+
+<h2>5. 测试（tests/）</h2>
+<pre><code>.venv/bin/python -m pytest tests/ -q
+# test_core.py       —— 切分/RRF/图谱等纯逻辑单元测试（不依赖 LLM）
+# test_agent_stream.py —— Agent SSE 事件顺序回归（intent→tools→delta→citations→done）</code></pre>
+
+<h2>6. 部署速查</h2>
+<pre><code># 前置：.env 配 LLM_API_KEY；HF_HOME 默认 ./hf_cache（模型缓存在仓库内）
+.venv/bin/python -m uvicorn insurwiki_rag.server.main:app --port 8010 --app-dir src
+# Web 工作台 http://127.0.0.1:8010/   流程文档 /docs/   本文档站 /docs/deep-dive/（如经静态服务映射）</code></pre>
+<div class="box note">所有示例数值（31958/31842/1500/454/1426、1633 节点/1087 边、25 Wiki 页、Hit@5 75% 等）均取自仓库当前 <code>data/processed/stats.json</code>、<code>artifacts/graph/kg.json</code>、<code>artifacts/eval/report.json</code> 实测产物；标注"示例"的输入输出片段为按源码逻辑构造的典型形态，字段与结构可与源码逐一对照。</div>
+
+<footer>⑥/⑥ · 上一页：<a href="05-agent.html">顾问Agent</a> · 返回：<a href="index.html">总览</a></footer>
+</div>
+<script src="../html/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true, theme:"neutral", flowchart:{curve:"basis"}});</script>
+</body>
+</html>

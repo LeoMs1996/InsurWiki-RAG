@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>② 混合检索：BM25+向量+RRF+Rerank · 深度实现</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="site"><div class="inner">
+  <span class="logo">InsurWiki-RAG · 深度实现文档</span>
+  <a href="index.html">总览</a>
+  <a href="01-data.html">①数据与切分</a>
+  <a class="cur" href="02-retrieval.html">②混合检索</a>
+  <a href="03-selfrag.html">③Self-RAG</a>
+  <a href="04-graphrag-wiki.html">④图谱与Wiki</a>
+  <a href="05-agent.html">⑤顾问Agent</a>
+  <a href="06-api-eval.html">⑥API与评测</a>
+</div></header>
+<div class="wrap">
+
+<h1>② 混合检索：BM25 + 向量 + RRF 融合 + Rerank 精排</h1>
+<p class="muted">源码：<code>src/insurwiki_rag/retrieval/hybrid.py</code>（212 行）。核心类：<code>Embedder</code> / <code>VectorStore</code> / <code>BM25Store</code> / <code>Reranker</code> / 门面 <code>HybridRetriever</code>。</p>
+
+<h2>1. 检索全链路</h2>
+<div class="mermaid">
+flowchart TD
+  Q["query 字符串"] --> E["Embedder.encode(query)<br/>bge-small-zh-v1.5 → 512 维归一化向量"]
+  Q --> J["tokenize(query) jieba 分词"]
+  E --> V["VectorStore.search<br/>矩阵点积 = 余弦（已归一化）→ top-20"]
+  J --> B["BM25Store.search<br/>BM25Okapi.get_scores → top-20（score&gt;0）"]
+  V --> R["rrf_fuse 两路排名<br/>score = Σ 1/(60+rank)"]
+  B --> R
+  G["GraphRAG 图谱通道<br/>（可选第三路排名）"] -.并入.-> R
+  R --> C["取 fused 前 max(top_k, 3×n) 候选"]
+  C --> RR["Reranker.rerank<br/>bge-reranker-v2-m3 cross-encoder 打分"]
+  RR --> O["top-N 结果 chunk<br/>rrf_score + rerank_score + from_graph"]
+</div>
+
+<h2>2. 向量通道：本地 bge-small-zh-v1.5 + numpy 余弦</h2>
+<p>建库时对全部 chunk 一次性 <code>encode(..., normalize_embeddings=True)</code>，得到 N×512 的 float32 矩阵存 <code>artifacts/index/embeddings.npy</code>。因为向量都归一化了，<b>余弦相似度退化为一次矩阵点积</b>：</p>
+<pre><code># VectorStore.search —— 全库点积后取 top_k
+sims = self.matrix @ qvec            # N×512 @ 512 → N 个余弦值
+sims = np.nan_to_num(sims, nan=-1.0, posinf=1.0, neginf=-1.0)
+idx  = np.argsort(-sims)[:top_k]     # 降序取前 20</code></pre>
+<p class="muted">几千 chunk 规模下暴力扫全库是最快且最简的实现（无需 ANN 索引）；<code>nan_to_num</code> 兜底防止脏向量污染排序。Embedder 进程级单例（<code>get_embedder()</code>），模型只加载一次。</p>
+
+<h2>3. 稀疏通道：BM25Okapi + jieba</h2>
+<pre><code>def tokenize(text): return [t for t in jieba.cut(text) if t.strip()]
+# 建库：BM25Okapi([tokenize(c["text"]) for c in chunks])
+# 查询：scores = bm25.get_scores(tokenize(query))，只保留 score>0 的命中</code></pre>
+<p>示例：查询 <i>"免赔额是多少"</i> 经 jieba 切为 <code>['免赔额', '是', '多少']</code>。"免赔额"作为整词命中文本中含"免赔额"的 chunk，这正是向量通道容易在长条款中稀释的词面信号。</p>
+
+<h2>4. RRF 融合：公式与手工演算</h2>
+<p>两路分数尺度完全不可比（余弦 ∈ [0,1]，BM25 无界），所以不用分数加权而用<b>排名</b>融合：</p>
+<pre><code>score(d) = Σ_路 1 / (k + rank_路(d))，k = RRF_K = 60</code></pre>
+<p>示例（top-3 演算，k=60）：</p>
+<table>
+<tr><th>chunk</th><th>向量路排名</th><th>BM25 路排名</th><th>RRF 计算</th><th>fused</th></tr>
+<tr><td><code>c-A</code></td><td>1</td><td>3</td><td>1/61 + 1/63</td><td><b>0.03252</b></td></tr>
+<tr><td><code>c-B</code></td><td>4</td><td>1</td><td>1/64 + 1/61</td><td>0.03227</td></tr>
+<tr><td><code>c-C</code></td><td>2</td><td>—（未入 BM25 top-20）</td><td>1/62</td><td>0.01613</td></tr>
+</table>
+<p>要点：<b>双路都命中的 chunk 显著占优</b>（≈两倍于单路冠军）；只进一路的按名次拿保底分。GraphRAG 图谱通道命中时作为第三路排名列表加入同一公式（见④），因此 <code>from_graph</code> 的 chunk 也天然获得加成而不是硬插队。</p>
+
+<h2>5. Rerank 精排：cross-encoder</h2>
+<p>RRF 融合后不直接取 top-N，而是取前 <code>max(top_k, 3×n)</code> 个候选交给本地 <code>bge-reranker-v2-m3</code>（<code>CrossEncoder(max_length=512)</code>，惰性加载）：</p>
+<pre><code>pairs  = [(query, chunk_text) for chunk in candidates]
+scores = self.model.predict(pairs)          # 每对一个相关性分（可 &gt;1 或 &lt;0）
+top_n  = sorted(zip(cand_idx, scores), key=-score)[:n]</code></pre>
+<p>bi-encoder（向量通道）把 query 和 doc 各自压缩成一个向量再比距离，损失交互信息；cross-encoder 把 <code>(query, doc)</code> 拼一起过 transformer，能识别"问的是免赔额金额、条款答的是抵扣规则"这类细粒度错配，代价是每个候选都要前向一次，所以只对 RRF 粗筛后的 ≤60 个候选做。</p>
+
+<h2>6. 一次完整查询的输入输出（GET /api/search 真实行为）</h2>
+<p><span class="in">输入</span>：<code>GET /api/search?q=免赔额是怎么规定的&top_n=5</code></p>
+<p><span class="out">输出</span>（<code>HybridRetriever.search</code> 返回列表，此处展示 1 条结构）：</p>
+<pre><code>[
+  {
+    "text": "第六条 免赔额指保险期间内符合保险责任但由被保险人自行承担、保险人不赔付的部分……",
+    "section_path": "第六条",
+    "offset": 1834,
+    "chunk_type": "clause",
+    "chunk_id": "c-1f0e2d3a4b",
+    "doc_id": "doc-0021",
+    "policy_id": "P9ab12cd34e",
+    "policy_name": "TaiPing个人住院医疗费用保险（互联网专属2021-D版）条款",
+    "rerank_score": 0.9827,     // cross-encoder 分，决定最终名次
+    "rrf_score": 0.049206,      // 三路（向量+BM25+图谱）排名融合分
+    "from_graph": true           // 该 chunk 是否由图谱通道带入
+  },
+  ... // 共 5 条，按 rerank_score 降序
+]</code></pre>
+<p class="muted">没有 rerank 的轻量版是 <code>recall()</code>：双路召回 + RRF 即返回（带 <code>vec_score</code>/<code>bm25_score</code> 原始分），供 Agent 工具和图谱通道使用，避免每次都跑 cross-encoder。</p>
+
+<h2>7. 索引持久化与加载</h2>
+<table>
+<tr><th>文件</th><th>内容</th><th>写入/读取</th></tr>
+<tr><td><code>artifacts/index/chunks.jsonl</code></td><td>每个 chunk 一行 JSON（见①的结构 + wiki 回灌追加的行）</td><td><code>build_index</code> 覆盖写 / <code>augment_index_with_wiki</code> 追加写</td></tr>
+<tr><td><code>artifacts/index/embeddings.npy</code></td><td>N×512 float32 矩阵，行号与 chunks.jsonl 行号对齐</td><td><code>np.save</code> / <code>np.load</code>；wiki 回灌用 <code>np.vstack</code> 追加</td></tr>
+</table>
+<p><code>load_index()</code> 只需重算 jieba 分词（秒级），embedding 矩阵直接加载——服务启动（惰性 bootstrap）不用重新编码。</p>
+
+<h2>8. 参数速查与调参方向</h2>
+<table>
+<tr><th>参数</th><th>默认</th><th>作用点</th><th>调参影响</th></tr>
+<tr><td><code>RRF_K</code></td><td>60</td><td>RRF 分母</td><td>越小头部排名权重越大；60 是社区公认稳健值</td></tr>
+<tr><td><code>RERANK_TOP_N</code></td><td>5</td><td>最终返回条数</td><td>调大→LLM 上下文更多证据，支撑率↑但延迟↑</td></tr>
+<tr><td><code>top_k</code>（调用处）</td><td>20（API 调试）/ 15（Self-RAG）</td><td>每路召回 & rerank 候选池</td><td>过小漏召回，过大精排变慢</td></tr>
+</table>
+
+<footer>②/⑥ · 上一页：<a href="01-data.html">数据与切分</a> · 下一页：<a href="03-selfrag.html">Self-RAG</a></footer>
+</div>
+<script src="../html/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true, theme:"neutral", flowchart:{curve:"basis"}});</script>
+</body>
+</html>

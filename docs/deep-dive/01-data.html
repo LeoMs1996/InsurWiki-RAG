@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>① 数据获取与结构感知切分 · 深度实现</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="site"><div class="inner">
+  <span class="logo">InsurWiki-RAG · 深度实现文档</span>
+  <a href="index.html">总览</a>
+  <a class="cur" href="01-data.html">①数据与切分</a>
+  <a href="02-retrieval.html">②混合检索</a>
+  <a href="03-selfrag.html">③Self-RAG</a>
+  <a href="04-graphrag-wiki.html">④图谱与Wiki</a>
+  <a href="05-agent.html">⑤顾问Agent</a>
+  <a href="06-api-eval.html">⑥API与评测</a>
+</div></header>
+<div class="wrap">
+
+<h1>① 数据获取与结构感知切分</h1>
+<p class="muted">源码：<code>src/insurwiki_rag/data/pipeline.py</code>（144 行）· <code>src/insurwiki_rag/chunking/structure_aware.py</code>（150 行）· 入口 <code>scripts/pipeline.py</code></p>
+
+<h2>1. 总体流程</h2>
+<div class="mermaid">
+flowchart TD
+  A["hf-mirror 下载 clause_train.json<br/>31958 条"] --> B["parse_instruction 正则解析<br/>→ 31842 条 &lt;Q,A,Evidence,合同名&gt;"]
+  B --> C["clean_and_sample<br/>去重指纹 + 随机采样 seed=42<br/>→ 1500 条 qa_triples.jsonl"]
+  C --> D["build_corpus 按合同聚合<br/>→ 454 份 corpus_docs.jsonl"]
+  D --> E["chunk_docs 结构感知切分<br/>条-款-项 + 表格通道"]
+  E --> F["build_index embedding + BM25 分词<br/>→ artifacts/index/"]
+</div>
+<p>实测统计（<code>data/processed/stats.json</code>）：<code>{"raw_records": 31958, "parsed": 31842, "sampled": 1500, "policies": 454, "fragments": 1426}</code></p>
+
+<h2>2. 下载与解析（fetch / parse_instruction）</h2>
+<p>数据源是 InsQABench 合同问答训练集，经 <code>hf-mirror.com</code> 下载到 <code>data/raw/insqabench_clause_train.json</code>（已存在则跳过下载）。每条原始记录形如 <code>{"instruction": "...", "output": "..."}</code>，问答三元组全部埋在 <code>instruction</code> 自由文本里，用两个正则抠出来：</p>
+<pre><code># data/pipeline.py
+_RE_CONTRACT = re.compile(r"这段文字来自的合同是[:：]\s*(?P&lt;name&gt;.+?)\n")
+_RE_FRAGMENT = re.compile(r"片段内容[:：]\s*(?P&lt;frag&gt;.*?)\n用户提问[:：]\s*(?P&lt;q&gt;.+)$", re.S)</code></pre>
+
+<h3>示例：一步真实的输入 → 输出</h3>
+<p><span class="in">输入</span>（原始数据集中的一条）：</p>
+<pre><code>{
+  "instruction": "这段文字来自的合同是：TaiPing太平财产保险有限公司恶性肿瘤住院医疗费用保险（互联网专属2021-B版）条款\n片段内容：第十三条 保险人按照第二十三条的约定，认为投保人、被保险人或者受益人提供的相关索赔的证明和资料不完整的，应当及时一次性通知……\n用户提问：如果保险人认为索赔证据不完整，会如何处理？",
+  "output": "保险人会**一次性**通知投保人、被保险人或受益人补充提供。……"
+}</code></pre>
+<p><span class="out">输出</span>（<code>parse_instruction</code> 返回的 dict；任一字段太短则整条丢弃：<code>len(frag)&lt;30 / len(q)&lt;4 / len(output)&lt;4</code>）：</p>
+<pre><code>{
+  "policy_name": "TaiPing太平财产保险有限公司恶性肿瘤住院医疗费用保险（互联网专属2021-B版）条款",
+  "evidence": "第十三条 保险人按照第二十三条的约定，认为……",
+  "question": "如果保险人认为索赔证据不完整，会如何处理？",
+  "answer": "保险人会**一次性**通知投保人、被保险人或受益人补充提供。……"
+}</code></pre>
+
+<h2>3. 去重与采样（clean_and_sample）</h2>
+<p>去重不用整段文本，而是<b>去空白后的 MD5 指纹</b>：<code>md5( question + "|" + evidence[:120] )</code>——问题相同且证据开头相同即视为重复，避免标点/空白差异导致漏判。随后 <code>random.Random(42)</code> 固定种子采样，保证任何人重跑得到同一份 1500 条。</p>
+<p><span class="in">输入</span> 31842 条解析记录 → <span class="out">输出</span>（<code>data/processed/qa_triples.jsonl</code> 第一行真实内容）：</p>
+<pre><code>{
+  "qa_id": "qa-00014",
+  "policy_name": "TaiPing太平财产保险有限公司恶性肿瘤住院医疗费用保险（互联网专属2021-B版）条款",
+  "policy_id": "P6e27e96541",          // "P" + md5(合同名)[:10]，同名合同稳定同 ID
+  "question": "如果保险人认为索赔证据不完整，会如何处理？",
+  "answer": "保险人会**一次性**通知投保人、被保险人或受益人补充提供。……",
+  "evidence": "第十三条 …… 第十四条 ……"
+}</code></pre>
+
+<h2>4. 按合同聚合成"文档"（build_corpus）</h2>
+<p>同一 <code>policy_id</code> 的所有证据片段（去重后）拼接成一份合同文档，供切分阶段拿到跨片段的条款上下文。<span class="out">输出</span> <code>corpus_docs.jsonl</code>：</p>
+<pre><code>{
+  "doc_id": "doc-0000",
+  "policy_id": "P00265f647b",
+  "policy_name": "充电桩综合保险条款2020-01-18条款",
+  "text": "&lt;全部片段以 \n\n 连接&gt;",
+  "fragments": ["第十六条 ……", "第二条 ……", ...],   // 保持原文顺序
+  "qa_ids": ["qa-00123", "qa-00456", ...]
+}</code></pre>
+
+<h2>5. 结构感知切分（chunk_docs → chunk_fragment）</h2>
+<p>保险条款是严格的<b>条-款-项</b>层级。切分器按四条规则保证语义完整性：</p>
+<ol>
+<li><b>条边界</b>：正则 <code>第[一二三四五六七八九十百千零〇\d]+条</code> 找出所有"第X条"位置，一个 chunk 永不跨条；</li>
+<li><b>句边界聚合</b>：条内按 <code>(?&lt;=[。！？；])</code> 切句，贪心装进窗口，超过 <code>MAX_CHARS=420</code> 就开新 chunk，并携带 <code>OVERLAP_CHARS=60</code> 的尾部重叠，防止边界句被截断丢上下文；</li>
+<li><b>续条标记</b>：同一条被切成多块时，后续块前缀 <code>"第X条(续)"</code>，让 embedding 与引用都能对回条款号；</li>
+<li><b>表格独立通道</b>：<code>looks_like_table</code> 命中（含"费率"+数字，或 <code>|</code>≥2，或 &gt;60% 行含数字）的片段不走句子切分，整块走 <code>table_to_kv</code> 序列化为 Markdown 表 + KV 摘要，<code>chunk_type="table"</code>。</li>
+</ol>
+
+<h3>示例 A：普通条款切分</h3>
+<p><span class="in">输入</span> fragment（doc-0000 的第一个片段，<code>start_offset=0</code>）：<i>"第十六条 保险人自收到赔偿保险金的请求和有关证明、资料之日起六十日内，……应当支付相应的差额。 投保人、被保险人义务"</i></p>
+<p><span class="out">输出</span>（<code>artifacts/index/chunks.jsonl</code> 第一行，真实记录）：</p>
+<pre><code>{
+  "text": "第十六条 保险人自收到赔偿保险金的请求和有关证明、资料之日起六十日内，……应当支付相应的差额。 投保人、被保险人义务",
+  "section_path": "第十六条",           // 条款路径 = 条标题
+  "offset": 0,                          // 在 doc.text 中的字符偏移，可回溯原文
+  "chunk_type": "clause",
+  "chunk_id": "c-3b2bb1986f",           // "c-" + md5(doc_id + text)[:10]，内容变 ID 即变
+  "doc_id": "doc-0000",
+  "policy_id": "P00265f647b",
+  "policy_name": "充电桩综合保险条款2020-01-18条款"
+}</code></pre>
+<p>同 doc 的第二个片段 offset=111 —— 即 <code>0 + len(第一片段) + 2</code>（2 是连接符 <code>"\n\n"</code>），偏移累计在 <code>chunk_docs</code> 中维护。</p>
+
+<h3>示例 B：表格通道序列化</h3>
+<p><span class="in">输入</span>（费率表片段，含 <code>|</code> 列分隔）：</p>
+<pre><code>年龄|费率
+18-30|0.0025
+31-40|0.0038</code></pre>
+<p><span class="out">输出</span>（<code>table_to_kv</code>，单 chunk、<code>chunk_type="table"</code>）：</p>
+<pre><code>（费率表/表格数据，Markdown 序列化）
+| 年龄 | 费率 |
+| 18-30 | 0.0025 |
+| 31-40 | 0.0038 |
+
+KV 摘要：
+年龄：费率
+18-30：0.0025
+31-40：0.0038</code></pre>
+<p class="muted">Markdown 表给 reranker/LLM 看结构，KV 摘要给 BM25 提供词面命中（"18-30"“0.0025"这类 token 在表头行里很难被切词命中）。</p>
+
+<div class="mermaid">
+flowchart LR
+  F["fragment"] --> T{"looks_like_table?"}
+  T -- 是 --> KV["table_to_kv<br/>单 chunk · chunk_type=table"]
+  T -- 否 --> A{"有 第X条 ?"}
+  A -- 是 --> S["按条切段"] --> W["句聚合 420/60 窗口<br/>首块前缀=条标题，续块=第X条(续)"]
+  A -- 否 --> W2["未编号段落 直接句聚合"]
+</div>
+
+<h2>6. 为什么这样设计（可核对的设计动机）</h2>
+<ul>
+<li><b>420 字符窗口</b>：注释原文"约等于 300 token（中文 1 字≈1.5 token 的保守值）"，同时低于 reranker 的 <code>max_length=512</code>，保证精排时不截断；</li>
+<li><b>60 字符 overlap</b>：约 1~2 句，覆盖条款里"前句条件、后句结论"的高频句式；</li>
+<li><b>chunk_id 内容寻址</b>（md5(doc_id+text)）：重跑 pipeline 时内容未变的 chunk ID 稳定，图谱节点挂的 chunk_ids 不会漂移；</li>
+<li><b>offset 元数据</b>：引用回溯时可以从 doc.text 精确定位原文，而不是只能给"相似片段"。</li>
+</ul>
+
+<footer>①/⑥ · 上一页：<a href="index.html">总览</a> · 下一页：<a href="02-retrieval.html">混合检索</a></footer>
+</div>
+<script src="../html/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true, theme:"neutral", flowchart:{curve:"basis"}});</script>
+</body>
+</html>
