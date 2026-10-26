@@ -209,8 +209,9 @@ class SelfRAGGraph:
         g.add_edge("retrieve", "grade_relevant")
         g.add_conditional_edges("grade_relevant", lambda s: "rewrite" if not s.get("relevant") else "generate",
                                 {"rewrite": "rewrite", "generate": "generate"})
-        g.add_conditional_edges("rewrite", lambda s: END if s.get("refused") else "generate",
-                                {END: END, "generate": "generate"})
+        g.add_conditional_edges("rewrite",
+                                lambda s: END if s.get("refused") else "grade_relevant",
+                                {END: END, "grade_relevant": "grade_relevant"})
         g.add_edge("generate", "grade_supported")
         g.add_conditional_edges("grade_supported",
                                 lambda s: "compliance",

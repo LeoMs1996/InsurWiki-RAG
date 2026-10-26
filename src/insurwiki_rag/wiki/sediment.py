@@ -128,17 +128,17 @@ def render_pages(pages: List[Dict[str, Any]],
             "overview": b.get("overview", ""),
             "chunk_ids": p["chunk_ids"], "created_at": created,
         })
+    (Config.WIKI_DIR / "index.json").write_text(
+        json.dumps(rendered, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[wiki] rendered {len(rendered)} pages -> {Config.WIKI_DIR}")
+    return rendered
+
+
 def _fmt_point(x: Any) -> str:
     """LLM 要点可能是 dict（如 {'条款': ...}），统一格式化为字符串。"""
     if isinstance(x, dict):
         return "　".join(str(v) for v in x.values())
     return str(x)
-
-
-ZpG
-        json.dumps(rendered, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[wiki] rendered {len(rendered)} pages -> {Config.WIKI_DIR}")
-    return rendered
 
 
 def _chunks_sec(p, cid):

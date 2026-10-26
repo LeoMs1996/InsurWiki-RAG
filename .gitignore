@@ -11,3 +11,4 @@ artifacts/index/
 __pycache__/
 *.pyc
 data/raw/insqabench/.cache/
+.idea/

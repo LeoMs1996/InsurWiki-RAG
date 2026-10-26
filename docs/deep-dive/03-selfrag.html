@@ -9,7 +9,7 @@
 <header class="site"><div class="inner">
   <span class="logo">InsurWiki-RAG · 深度实现文档</span>
   <a href="index.html">总览</a>
-  <a href="01-data.html">①数据与切分</a>
+  <a href="00-beginner.html">⓪新人图解</a><a href="01-data.html">①数据与切分</a>
   <a href="02-retrieval.html">②混合检索</a>
   <a class="cur" href="03-selfrag.html">③Self-RAG</a>
   <a href="04-graphrag-wiki.html">④图谱与Wiki</a>
@@ -28,7 +28,7 @@ stateDiagram-v2
   retrieve --> grade_relevant
   grade_relevant --> generate : relevant 非空
   grade_relevant --> rewrite : relevant 为空
-  rewrite --> retrieve : 改写成功(retried=false) → 重检索一次
+  rewrite --> grade_relevant : 改写成功(内联重检索后) → 重新过相关性判定
   rewrite --> [*] : 改写后仍无 / 已重试 → refused
   generate --> grade_supported
   grade_supported --> compliance : 支撑率≥0.35
@@ -38,8 +38,8 @@ stateDiagram-v2
 </div>
 <pre><code>// 条件边的真实实现（_build 方法）
 "grade_relevant": lambda s: "rewrite" if not s.get("relevant") else "generate"
-"rewrite":        lambda s: END if s.get("refused") else "generate"</code></pre>
-<p>注意两个防环设计：改写循环<b>只允许一次</b>（<code>retried</code> 标志位）；<code>grade_supported → compliance</code> 无条件边——低支撑率不回炉重生成，而是直接把答案替换为标准拒答话术（金融场景宁可拒答不可误导）。</p>
+"rewrite":        lambda s: END if s.get("refused") else "grade_relevant"</code></pre>
+<p>注意两个防环设计：改写循环<b>只允许一次</b>（<code>retried</code> 标志位），且改写重检索后<b>回到 grade_relevant 重新判定</b>，新候选不能免检；<code>grade_supported → compliance</code> 无条件边——低支撑率不回炉重生成，而是直接把答案替换为标准拒答话术（金融场景宁可拒答不可误导）。入门讲解见 <a href="beginner-guide.md">新人图解指南</a>。</p>
 
 <h2>2. 逐节点输入输出</h2>
 

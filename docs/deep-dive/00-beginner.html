@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>⓪ 新人图解 · Self-RAG / 混合检索 / GraphRAG / Wiki 全链路</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+/* ===== 本页专属图表样式（不污染全局 styles.css） ===== */
+.qa-grid { display:grid; grid-template-columns:1fr; gap:12px; margin:14px 0; }
+.qa { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 18px; border-left:4px solid var(--accent); }
+.qa b.q { color:var(--cyan); display:block; margin-bottom:6px; font-size:15.5px; }
+.qa .a { color:var(--fg); }
+.qa .a em { color:var(--green); font-style:normal; font-weight:700; }
+.qa .a em.no { color:var(--red); }
+
+/* 分层架构图 */
+.layers { margin:16px 0; }
+.layer { display:flex; align-items:stretch; gap:10px; margin:0; }
+.layer .lname { flex:0 0 118px; display:flex; flex-direction:column; justify-content:center; align-items:center;
+  background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:8px 6px; font-size:12.5px; color:var(--muted); }
+.layer .lname b { color:var(--fg); font-size:13.5px; }
+.layer .lboxes { flex:1; display:flex; flex-wrap:wrap; gap:8px; }
+.lb { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:7px 12px; font-size:13px; line-height:1.5; }
+.lb small { display:block; color:var(--muted); font-size:11.5px; }
+.lb.hl { border-color:var(--accent); box-shadow:0 0 0 1px rgba(88,166,255,.35); }
+.lb.datalb { border-style:dashed; }
+.lb.wiki { border-color:var(--purple); }
+.lb.graph { border-color:var(--green); }
+.larrow { text-align:center; color:var(--muted); font-size:12px; padding:2px 0; }
+.larrow b { color:var(--orange); font-weight:600; }
+.callout { background:var(--panel2); border:1px dashed var(--red); border-radius:8px; padding:10px 14px; margin:10px 0; font-size:13.5px; }
+.callout b { color:var(--red); }
+
+/* 三通道流水线 */
+.pipe { display:flex; flex-wrap:wrap; align-items:stretch; gap:0; margin:14px 0; }
+.pcard { background:var(--panel); border:1px solid var(--border); border-radius:9px; padding:10px 12px; font-size:12.8px; line-height:1.55; flex:1 1 150px; min-width:150px; margin:4px; position:relative; }
+.pcard b.t { display:block; font-size:13.5px; margin-bottom:4px; }
+.pcard small { color:var(--muted); }
+.pcard.chA { border-top:3px solid var(--cyan); } .pcard.chA b.t { color:var(--cyan); }
+.pcard.chB { border-top:3px solid var(--orange); } .pcard.chB b.t { color:var(--orange); }
+.pcard.chC { border-top:3px solid var(--green); } .pcard.chC b.t { color:var(--green); }
+.pcard.fuse { border-top:3px solid var(--purple); } .pcard.fuse b.t { color:var(--purple); }
+.pcard.rank { border-top:3px solid var(--red); } .pcard.rank b.t { color:var(--red); }
+.parr { align-self:center; color:var(--muted); font-size:16px; padding:0 2px; }
+
+/* 七节点卡片 */
+.nodes7 { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; margin:14px 0; }
+.ncard { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px 15px; font-size:13.2px; }
+.ncard h4 { margin:0 0 6px; font-size:14.5px; color:var(--accent); }
+.ncard h4 .n { display:inline-flex; width:22px; height:22px; border-radius:50%; background:var(--accent); color:#0d1117; font-size:12.5px; align-items:center; justify-content:center; margin-right:7px; font-weight:700; }
+.ncard .mis { margin-top:6px; padding-top:6px; border-top:1px dashed var(--border); color:var(--orange); font-size:12.3px; }
+.ncard code { font-size:11.8px; }
+
+/* 互动步骤器 */
+.stepper { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin:16px 0; }
+.sbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+.sbar button { background:var(--panel2); color:var(--fg); border:1px solid var(--border); border-radius:7px; padding:6px 16px; font-size:13.5px; cursor:pointer; }
+.sbar button:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+.sbar button:disabled { opacity:.35; cursor:default; }
+.scount { color:var(--muted); font-size:12.5px; margin-left:auto; }
+.sdots { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:12px; }
+.sdot { width:11px; height:11px; border-radius:50%; background:var(--panel2); border:1px solid var(--border); cursor:pointer; }
+.sdot.done { background:var(--accent); border-color:var(--accent); }
+.sdot.cur { background:var(--green); border-color:var(--green); transform:scale(1.35); }
+.spanel { display:grid; grid-template-columns: 1.4fr 1fr; gap:14px; }
+@media (max-width:760px){ .spanel{ grid-template-columns:1fr; } }
+.smain { border-left:3px solid var(--accent); padding-left:14px; }
+.smain h4 { margin:0 0 6px; font-size:15.5px; }
+.smain .who { display:inline-block; font-size:11.8px; color:var(--bg); background:var(--cyan); border-radius:9px; padding:1px 9px; margin-bottom:8px; font-weight:600; }
+.smain p { font-size:13.4px; margin:6px 0; }
+.sside { background:#0a0e14; border:1px solid var(--border); border-radius:9px; padding:10px 13px; font-size:12.3px; }
+.sside h5 { margin:0 0 6px; font-size:12px; color:var(--accent); letter-spacing:.5px; }
+.sside .k { color:var(--purple); }
+.sside pre { margin:6px 0 0; padding:8px 10px; font-size:11.6px; line-height:1.5; }
+.sref { margin-top:10px; font-size:12px; color:var(--muted); }
+.sref code { font-size:11.5px; }
+
+/* Wiki 闭环环图 */
+.wiki-cycle { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:14px; margin:14px 0; overflow-x:auto; }
+.wc-steps { display:flex; flex-wrap:wrap; gap:6px; align-items:center; justify-content:center; }
+.wc { background:var(--panel2); border:1px solid var(--border); border-radius:9px; padding:9px 11px; font-size:12.4px; width:172px; line-height:1.5; }
+.wc b { display:block; color:var(--accent); font-size:12.8px; margin-bottom:3px; }
+.wc small { color:var(--muted); }
+.wc.end { border-color:var(--purple); } .wc.end b { color:var(--purple); }
+.wc-arrow { color:var(--muted); font-size:15px; padding:0 1px; }
+.wc-back { text-align:center; color:var(--purple); font-size:12.3px; margin-top:10px; border-top:1px dashed var(--purple); padding-top:8px; }
+
+/* 本体表 & 术语 */
+.onto-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 28px; }
+@media (max-width:760px){ .onto-grid{grid-template-columns:1fr;} }
+.toc { columns:2; font-size:13.2px; }
+@media (max-width:700px){ .toc{columns:1;} }
+.toc a { text-decoration:none; }
+kbd { background:var(--panel2); border:1px solid var(--border); border-radius:4px; padding:0 5px; font-size:12px; }
+</style>
+</head>
+<body>
+<header class="site"><div class="inner">
+  <span class="logo">InsurWiki-RAG</span>
+  <a class="cur" href="00-beginner.html">⓪新人图解</a>
+  <a href="01-data.html">①数据与切分</a>
+  <a href="02-retrieval.html">②混合检索</a>
+  <a href="03-selfrag.html">③Self-RAG</a>
+  <a href="04-graphrag-wiki.html">④图谱与Wiki</a>
+  <a href="05-agent.html">⑤顾问Agent</a>
+  <a href="06-api-eval.html">⑥API与评测</a>
+</div></header>
+
+<div class="wrap">
+<h1>⓪ 新人图解：Self-RAG、混合检索、GraphRAG 与 Wiki 到底怎么串起来</h1>
+<p class="muted">写给第一次接触 RAG / Agent 开发的同学。本页只回答三件事：<b>谁在什么时候调用谁</b>（链路）、<b>03 号页面的 Self-RAG 反思循环在干什么</b>、<b>04 号页面的 GraphRAG / Wiki 在链路里的位置</b>。所有数字与行为都逐一对照过 <code>src/</code> 源码。建议先读完本页，再回头看 ①–⑥ 号深度页面。</p>
+
+<div class="box tip"><b>本页速览</b>
+<div class="toc">
+1.<a href="#q0">先回答三个问题（30 秒版）</a><br>
+2.<a href="#prep">预备概念：RAG / 状态机 / 反思</a><br>
+3.<a href="#arch">谁调用谁：五层架构图</a><br>
+4.<a href="#seq">全链路时序图（一次提问）</a><br>
+5.<a href="#walk">逐步走查：互动步骤器（16 步）</a><br>
+6.<a href="#hybrid">混合检索内部：三通道流水线</a><br>
+7.<a href="#selfrag">重讲 03：七节点反思循环</a><br>
+8.<a href="#graph">重讲 04：GraphRAG 与 Wiki</a><br>
+9.<a href="#faq">FAQ 与术语表</a>
+</div></div>
+
+<!-- ================================================================ -->
+<h2 id="q0">1. 先回答你的三个问题（30 秒版）</h2>
+<div class="qa-grid">
+  <div class="qa"><b class="q">Q1：混合检索的时候会用到 Self-RAG 吗？</b>
+  <div class="a"><em class="no">不会。</em>调用方向是反的——<em>是 Self-RAG 调用混合检索</em>，不是混合检索调用 Self-RAG。混合检索（<code>retrieval/hybrid.py</code>）是个"纯工具"：给它一个问题，它还你 6 条最相关的条款片段，仅此而已，它不懂反思、不懂拒答。Self-RAG 状态机（<code>selfrag/graph.py</code>）的第一个节点 <code>retrieve</code> 才是它的调用方。打个比方：<b>混合检索是"查资料的实习生"，Self-RAG 是"拿着实习员的资料做质检的审核员"</b>——实习生从不反过来指挥审核员。</div></div>
+
+  <div class="qa"><b class="q">Q2：混合检索会用到 Wiki 吗？</b>
+  <div class="a"><em>会，但是"被动"地用。</em>Wiki 页面在<b>离线建库阶段</b>就已经被重新向量化、切成带 <code>chunk_type=wiki</code> 标记的特殊 chunk，混进了检索索引（<code>wiki/sediment.py</code> 的 <code>augment_index_with_wiki</code>）。所以线上检索时，BM25 通道和向量通道都可能命中某张 Wiki 页——对检索器来说它就是索引里的一份普通资料，检索代码里<b>没有任何一行</b>"去查 Wiki"的逻辑。另有<b>一种主动读法</b>，但只发生在顾问 Agent 的 <code>wiki_lookup</code> 工具里（直接读 <code>wiki/index.json</code>），不经过混合检索。</div></div>
+
+  <div class="qa"><b class="q">Q3：那整条链路到底是怎样的？</b>
+  <div class="a">一句话版：<b>问题 → /api/chat → Self-RAG 状态机 → 第一步 retrieve 里同时做图谱查询（第三通道）+ 混合检索（BM25+向量两路）→ RRF 融合 → 重排 → 反思判定 → 生成 → 支撑率检查 → 合规装配 → 返回</b>。图谱在"检索内部"，Wiki 在"索引数据里"，Self-RAG 在"检索外面"包着整个流程。看不懂没关系，下面第 3–5 节用三张图一步步拆。</div></div>
+</div>
+
+<div class="box note"><b>图谱也一样是"被动"参与</b>：Self-RAG 的 retrieve 节点会先调 <code>kg.query(问题)</code> 做实体链接，把命中的图谱实体关联的条款 chunk 作为<b>第三条检索通道</b>并进 RRF 融合。也就是说：04 号文档讲的 GraphRAG，在 /api/chat 链路里的位置是"<b>检索的一个通道</b> + 生成时的三元组约束"，它不是一个独立的问答入口。</div>
+
+<!-- ================================================================ -->
+<h2 id="prep">2. 预备概念：三个比喻看懂再往下读</h2>
+
+<h3>2.1 RAG = 让大模型"开卷考试"</h3>
+<p>大模型只知道训练语料里的通识，不知道你们公司这 1633 个图谱节点背后的保单条款。RAG（Retrieval-Augmented Generation）就是考试前先把相关资料翻出来垫在题目下面，让模型<b>只依据资料作答</b>。流程永远是：<span class="tag">检索 Retrieve</span>→<span class="tag">生成 Generate</span>。朴素 RAG 的问题：资料找错了它也硬答（幻觉）、答完了没人检查。金融场景不能接受，所以要加"自我检查"——这就是 Self-RAG。</p>
+
+<h3>2.2 LangGraph = 把流程画成"质检流水线"</h3>
+<p><code>selfrag/graph.py</code> 用 LangGraph 把问答流程建成一张<b>状态机</b>：每个<b>节点</b>是一道工序（检索、生成、检查……），<b>边</b>是工序间的流转，<b>条件边</b>是质检岔路口（合格→下一道；不合格→返工或拒收）。好处：流程可视化、每一步的状态都能留痕回放（<code>reflection</code> 字段）、岔路口规则是确定性的代码而不是模型的即兴发挥。</p>
+
+<h3>2.3 反思 token = 质检员盖的章</h3>
+<p>Self-RAG 论文（Asai et al., ICLR 2024）的核心思想：让模型在流程里不断自问四个问题并留下标记——<code>[Retrieve?]</code> 需要检索吗、<code>[IsRelevant?]</code> 资料相关吗、<code>[IsSupported?]</code> 答案有依据吗、<code>[IsUseful?]</code> 答案有用吗。本项目用<b>确定性 Python 规则</b>替模型"盖章"（见第 7 节），每个章都写进返回 JSON 的 <code>reflection</code> 数组，这就是你能在问答页看到的"反思轨迹"。</p>
+
+<h3>2.4 本项目一共三条在线链路（先记住这张表）</h3>
+<table>
+<tr><th>入口</th><th>后端</th><th>经过 Self-RAG？</th><th>碰到图谱？</th><th>碰到 Wiki？</th></tr>
+<tr><td>Web 页签「合规问答」</td><td><code>POST /api/chat</code></td><td class="in">✅ 整条状态机</td><td>✅ 第三检索通道 + 生成约束</td><td>被动（wiki chunk 在索引里）</td></tr>
+<tr><td>Web 页签「保险顾问 Agent」</td><td><code>POST /api/agent/chat(/stream)</code></td><td class="out">❌ 自己的意图状态机</td><td>✅ <code>graph_query</code> 工具主动查</td><td>✅ <code>wiki_lookup</code> 工具主动读</td></tr>
+<tr><td>调试接口</td><td><code>GET /api/search</code></td><td class="out">❌ 直通检索</td><td>❌（不带图谱通道）</td><td>被动（同索引）</td></tr>
+<tr><td>Web 页签「Wiki 知识沉淀」/「知识图谱」</td><td><code>GET /api/wiki</code>、<code>GET /api/graph</code></td><td class="out">❌ 纯读展示</td><td>读 kg.json 画图</td><td>读 24 页渲染</td></tr>
+</table>
+<p class="muted">记忆口诀：<b>问知识 → Self-RAG；办事情（多轮/计算/查表）→ Agent；调检索 → /api/search。</b></p>
+
+<!-- ================================================================ -->
+<h2 id="arch">3. 谁调用谁：一张五层架构图（先看箭头方向）</h2>
+
+<div class="layers">
+  <div class="layer">
+    <div class="lname"><b>L0 用户</b>浏览器</div>
+    <div class="lboxes">
+      <div class="lb">页签① 合规问答<small>填问题 → 看答案/引用/反思</small></div>
+      <div class="lb">页签② Wiki 沉淀<small>浏览 24 页主题页</small></div>
+      <div class="lb">页签③ 顾问 Agent<small>多轮对话 + 工具调用</small></div>
+      <div class="lb">页签④ 知识图谱<small>canvas 拖拽可视化</small></div>
+    </div>
+  </div>
+  <div class="larrow">↓ 每个页签只打一个 API</div>
+  <div class="layer">
+    <div class="lname"><b>L1 API 层</b>server/main.py</div>
+    <div class="lboxes">
+      <div class="lb hl">POST /api/chat<small>→ selfrag.ask() 单轮</small></div>
+      <div class="lb">POST /api/agent/chat(/stream)<small>→ agent.chat() SSE 流</small></div>
+      <div class="lb">GET /api/search · /api/wiki · /api/graph<small>调试与展示直通</small></div>
+    </div>
+  </div>
+  <div class="larrow">↓ 服务启动时 _bootstrap() 就把下面三层装配好</div>
+  <div class="layer">
+    <div class="lname"><b>L2 编排层</b>状态机</div>
+    <div class="lboxes">
+      <div class="lb hl"><b>SelfRAGGraph</b>（selfrag/graph.py）<small>7 节点反思循环，本页主角</small></div>
+      <div class="lb"><b>AdvisorAgent</b>（agent/advisor.py）<small>意图→工具→综合→合规，另一条链路</small></div>
+    </div>
+  </div>
+  <div class="larrow">↓ 编排层"拿工具"，工具层从不反过来调编排层</div>
+  <div class="layer">
+    <div class="lname"><b>L3 工具层</b>被调用</div>
+    <div class="lboxes">
+      <div class="lb hl"><b>HybridRetriever</b>（retrieval/hybrid.py）<small>BM25+向量(+图谱通道)→RRF→重排</small></div>
+      <div class="lb graph"><b>KnowledgeGraph.query</b>（graphrag/kg.py）<small>实体链接→1-hop→chunk≤8/triples≤12</small></div>
+      <div class="lb">Agent 五工具<small>rag_search / graph_query / wiki_lookup / calculator / compliance_check</small></div>
+      <div class="lb wiki">wiki/index.json<small>wiki_lookup 的直接数据源</small></div>
+    </div>
+  </div>
+  <div class="larrow">↓ 工具层只读数据层</div>
+  <div class="layer">
+    <div class="lname"><b>L4 数据层</b>artifacts/</div>
+    <div class="lboxes">
+      <div class="lb datalb">index/<small>全部 chunk（条款 + <b>wiki 回灌 chunk</b>）+ BM25 + 向量</small></div>
+      <div class="lb datalb graph">graph/kg.json<small>1633 节点 / 1087 边</small></div>
+      <div class="lb datalb wiki">wiki/<small>24 页 markdown + index.json</small></div>
+    </div>
+  </div>
+</div>
+
+<div class="callout">⚠️ 新人最容易搞反的一点：<b>箭头永远自上而下。</b>"混合检索"在 L3，它上面没有任何主人，除了 L2 的两个编排器会调它。<b>它自己不启动、不反思、不调 Self-RAG。</b>Wiki 和图谱在 /api/chat 链路里都是"数据/通道"，被检索被动使用；只有 Agent 链路里才有工具<b>主动</b>去查它们。</div>
+
+<!-- ================================================================ -->
+<h2 id="seq">4. 全链路时序图：在「合规问答」页签问一个问题之后</h2>
+<p class="muted">问题示例：<code>百万医疗险的免赔额和犹豫期是怎么规定的？</code>——它同时命中"免赔额"（费率因子）与"犹豫期"两类图谱实体，三条检索通道都会开动。</p>
+<div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as 浏览器·问答页签
+    participant API as main.py POST /api/chat
+    participant G as SelfRAGGraph 状态机
+    participant KG as KnowledgeGraph
+    participant R as HybridRetriever
+    participant RR as BGE-reranker
+    participant L as GLM 大模型
+
+    U->>API: {question}
+    API->>G: ask(question)
+    activate G
+    Note over G: ① retrieve 节点
+    G->>KG: kg.query(问题)
+    KG-->>G: 命中实体→1-hop→chunk_ids≤8 + 三元组≤12
+    G->>R: search(q, top_k=15, top_n=6, extra_channel=图谱chunk)
+    Note over R: BM25 路 + 向量路 + 图谱路<br/>RRF(k=60) 融合 → 前 15
+    R->>RR: 对 (问题, chunk正文) 两两打分
+    RR-->>R: rerank_score
+    R-->>G: top 6 候选（带 rrf/rerank/from_graph）
+    Note over G: ② grade_relevant：rerank>0.3 或 rrf≥0.03
+    alt 有相关证据
+        Note over G: ④ generate：证据 top5 + 三元组≤6
+        G->>L: 只依据证据作答，标注[n]
+        L-->>G: 答案（「结论：」开头）
+        Note over G: ⑤ grade_supported：逐句 bigram 支撑率
+        alt 支撑率 < 0.35
+            Note over G: 拒答（第二道闸）
+        end
+    else 无相关且未改写过
+        Note over G: ③ rewrite：LLM 改写查询
+        G->>L: 改写成检索友好的完整句
+        L-->>G: 改写后的问题
+        Note over G: 内联重跑 retrieve（只许一次）<br/>再回 grade_relevant 复检
+    end
+    Note over G: ⑥ compliance：敏感词+免责声明+引用装配<br/>⑦ grade_useful：长度>20 且非"依据不足"
+    G-->>API: answer / support_score / refused / citations / reflection
+    deactivate G
+    API-->>U: 200 JSON
+</div>
+<p class="muted">对照源码：<code>server/main.py:66-71</code>（路由与 ask 调用）、<code>selfrag/graph.py:62-96</code>（retrieve）、<code>196-215</code>（条件边路由）、<code>retrieval/hybrid.py:123-163</code>（search 与 extra_channel）、<code>graphrag/kg.py:80-105</code>（query）。</p>
+
+<!-- ================================================================ -->
+<h2 id="walk">5. 逐步走查：互动步骤器（点"下一步"或用 ←→ 键）</h2>
+<p class="muted">把上面时序图拆成 16 步，每步告诉你：谁在干活、状态里写了什么、反思章盖了什么、对应哪行源码。</p>
+<div class="stepper" id="stepper">
+  <div class="sbar">
+    <button id="sprev">⏮ 上一步</button>
+    <button id="snext">下一步 ⏭</button>
+    <span class="scount" id="scount"></span>
+  </div>
+  <div class="sdots" id="sdots"></div>
+  <div class="spanel">
+    <div class="smain" id="smain"></div>
+    <div class="sside" id="sside"></div>
+  </div>
+  <div class="sref" id="sref"></div>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="hybrid">6. 混合检索内部：三通道 → RRF 融合 → 重排（详细流程图）</h2>
+<p>Self-RAG 的 retrieve 节点对检索器只有一次调用 <code>search(q, top_k=15, top_n=6, extra_channel=…)</code>，但这次调用内部是三条通道并跑：</p>
+
+<div class="pipe">
+  <div class="pcard chA"><b class="t">通道 A · BM25（词面）</b>对问题分词后在全部 chunk 上做关键词倒排打分。<small>擅长：条款号、专有名词精确命中</small></div>
+  <div class="pcard chB"><b class="t">通道 B · 向量（语义）</b>bge-small-zh 把问题和 chunk 都编码成向量，算余弦相似度。<small>擅长：换个说法也能找到</small></div>
+  <div class="pcard chC"><b class="t">通道 C · 图谱（结构）</b>retrieve 节点先调 <code>kg.query</code>：实体名出现在问题里→取 1-hop 邻域→关联 chunk（≤8 个）整队作为第三份排名表。<small>擅长：跨条款的关系问题</small></div>
+  <div class="parr">→</div>
+  <div class="pcard fuse"><b class="t">RRF 融合（k=60）</b>每通道第 r 名得 <code>1/(60+r)</code> 分，同一 chunk 的分数<b>相加</b>后排序，取前 15。<small>图谱通道不插队，只是同样权重地投票</small></div>
+  <div class="parr">→</div>
+  <div class="pcard rank"><b class="t">Cross-Encoder 重排</b>bge-reranker-v2-m3 把「问题+chunk 正文」成对喂进去重新精算相关性，仅保留前 6，写入 <code>rerank_score</code>。<small>精但慢，所以只喂 15 个</small></div>
+</div>
+
+<h3>6.1 RRF 手算一遍（30 秒）</h3>
+<p>问题里出现"犹豫期"。候选 <code>chunk_107</code> 在向量通道排第 2、BM25 通道排第 5、图谱通道排第 1：</p>
+<pre><code>score(chunk_107) = 1/(60+2) + 1/(60+5) + 1/(60+1)
+                  = 0.0161  + 0.0152  + 0.0164  = 0.0477   ← 三通道都投它，基本锁头名</code></pre>
+<p>这就是 RRF 的哲学：<b>不比绝对分数，只比"几个通道都认你"</b>。免调权重、对分数量纲免疫。</p>
+
+<h3>6.2 Wiki 在这张图里的位置</h3>
+<div class="box tip">通道 A 和通道 B 的语料是<b>同一份索引</b>，里面除了条款 chunk，还有离线阶段回灌的 <code>chunk_type=wiki</code> 页面摘要（每页截取 ≤1500 字）。所以问"犹豫期一般多久"时，完全可能召回《犹豫期》主题页——它比零散条款更浓缩。<b>检索代码对此无感知</b>，这就是"沉淀反哺检索"的闭环落点。图谱通道（C）命中的则永远是条款 chunk（图谱节点的 <code>chunk_ids</code> 只登记条款出处）。</div>
+
+<h3>6.3 三个通道各自的角色（为什么缺一不可）</h3>
+<table>
+<tr><th>问题类型</th><th>A 词面</th><th>B 语义</th><th>C 图谱</th><th>说明</th></tr>
+<tr><td>"第 3.2 条说了什么"</td><td class="in">命中</td><td>一般</td><td>—</td><td>条款号精确匹配是 BM25 主场</td></tr>
+<tr><td>"买了之后反悔还能退吗"</td><td>弱</td><td class="in">命中</td><td>—</td><td>"反悔/退"≈"犹豫期"，语义通道补口语化表达</td></tr>
+<tr><td>"免赔额影响哪些责任"</td><td>中</td><td>中</td><td class="in">命中</td><td>跨条款关系，靠图谱实体"免赔额"1-hop 邻域拉齐散落证据</td></tr>
+</table>
+
+<!-- ================================================================ -->
+<h2 id="selfrag">7. 重讲 03 号页 · Self-RAG 七节点反思循环</h2>
+
+<h3>7.1 状态机全图（真实路由，含两道防环闸）</h3>
+<div class="mermaid">
+stateDiagram-v2
+    direction LR
+    [*] --> retrieve
+    retrieve --> grade_relevant
+    grade_relevant --> generate : 有相关证据
+    grade_relevant --> rewrite : 无相关 且 未改写过
+    rewrite --> grade_relevant : 改写→内联重检索→复检
+    rewrite --> [*] : 复检仍无 → 拒答
+    generate --> grade_supported
+    grade_supported --> compliance : 无论高低都流向 compliance（&lt;0.35 换拒答文案）
+    compliance --> grade_useful
+    grade_useful --> [*]
+    note right of rewrite
+        防环闸 1：retried 标志
+        只允许改写重检索一次
+    end note
+    note right of grade_supported
+        防环闸 2：低支撑直接拒答
+        不回炉重生成（金融取舍：
+        宁可拒答不可误导）
+    end note
+</div>
+
+<h3>7.2 七个节点逐个拆（对应 03 号页的"逐节点输入输出"）</h3>
+<div class="nodes7">
+  <div class="ncard"><h4><span class="n">1</span>retrieve 检索</h4>
+    <b>读：</b>query（或 rewrite 后的问题）<br><b>做：</b>先 <code>kg.query</code> 拿图谱通道，再 <code>search(top_k=15, top_n=6, extra_channel)</code>；候选为空 → 直接置 <code>refused</code>（第一道拒答闸）。<br><b>写：</b>candidates、graph_evidence、反思 <code>[Retrieve?] yes/no</code>。
+    <div class="mis">误区：它不只调检索器——图谱查询也发生在这里，别在 generate 里找图谱。</div></div>
+  <div class="ncard"><h4><span class="n">2</span>grade_relevant 相关性质检</h4>
+    <b>读：</b>candidates 的分数。<br><b>做：</b>规则过滤：<code>rerank_score&gt;0.3 或 rrf_score≥0.03</code> 算相关。<br><b>写：</b>relevant 列表、反思 <code>[IsRelevant?] yes/no</code>。
+    <div class="mis">误区：这一步零 LLM 调用。用阈值而非 LLM 判定——可控、省钱、可回放。</div></div>
+  <div class="ncard"><h4><span class="n">3</span>rewrite 查询改写（Retrieve-again）</h4>
+    <b>做：</b>LLM 把口语问题改写成关键词完整的检索句，置 <code>retried=True</code>，<b>内联</b>重跑 retrieve，然后回到 grade_relevant 复检；复检仍无 → 拒答。<br><b>写：</b>rewrite、retried、反思 <code>[Retrieve?] yes(rewrite)</code>。
+    <div class="mis">误区：改写不是无限重试。retried 标志保证只改一次，防止死循环烧钱。</div></div>
+  <div class="ncard"><h4><span class="n">4</span>generate 生成</h4>
+    <b>读：</b>relevant 前 5 条（带编号）+ 图谱三元组前 6 条。<br><b>做：</b>GLM 只依据证据作答，引用标 <code>[n]</code>，以「结论：」开头，明确说"依据不足"当证据不够。<br><b>写：</b>answer。
+    <div class="mis">误区：三元组进 prompt 是带约束的——"仅可引用，不得编造其外关系"。</div></div>
+  <div class="ncard"><h4><span class="n">5</span>grade_supported 支撑率质检</h4>
+    <b>做：</b>把答案切句，每句拆成<b>相邻两字对</b>（bigram），算有多大比例出现在证据原文里；覆盖 ≥50% 的句子算"有支撑"，<b>支撑率 = 有支撑句 / 总句数</b>，&lt; <code>SUPPORT_THRESHOLD=0.35</code> → 拒答。
+    <div class="mis">误区：这是"引用忠实度"的代理指标，纯字符串比对，不调 LLM，所以快且可复现。</div></div>
+  <div class="ncard"><h4><span class="n">6</span>compliance 合规装配</h4>
+    <b>做：</b>敏感词检查（命中则附提示）+ 拼免责声明 + 装配 citations（top5：chunk_id / 条款号 / 80 字摘录 / rrf·rerank 分数 / <code>from_graph</code> 标记）。<br><b>写：</b>citations。
+    <div class="mis">误区：citations 的 <code>from_graph:true</code> 能看出该证据是图谱通道拉进来的。</div></div>
+  <div class="ncard"><h4><span class="n">7</span>grade_useful 最后质检</h4>
+    <b>做：</b>答案长度 &gt;20 字且不含"依据不足"才算 useful，写入反思 <code>[IsUseful?]</code> 后结束。
+    <div class="mis">误区：它不再触发任何返工——前两道闸已经兜住了，这里是收官审计章。</div></div>
+</div>
+
+<h3>7.3 支撑率手算示例（跟 03 号页的演算对得上）</h3>
+<p>假设答案切成 4 句，bigram 覆盖率分别为 0.9 / 0.7 / 0.52 / 0.3。前三句 ≥0.5 算支撑句，第四句不算：</p>
+<pre><code>支撑率 = 3/4 = 0.75 ≥ 0.35  → 放行（若只有 1 句达标：1/4 = 0.25 &lt; 0.35 → 拒答并说明原因）</code></pre>
+<p class="muted">阈值可用环境变量 <code>SUPPORT_THRESHOLD</code> 覆盖（config.py:44，默认 0.35）。</p>
+
+<h3>7.4 返回 JSON 里各看什么</h3>
+<pre><code>{ "answer": "结论：……[1]……",        // 免责声明已由 compliance 拼接
+  "refused": false,                  // 三道拒答闸（无候选/复检仍无/支撑率低）都没触发
+  "support_score": 0.75,
+  "citations": [ {"chunk_id":"…","n":"第3.2条","excerpt":"…80字…",
+                  "scores":{"rrf":0.0477,"rerank":0.91,"from_graph":true}} ],
+  "reflection": [ {"token":"[Retrieve?]","value":"yes","n_candidates":6,
+                   "graph_linked_entities":["犹豫期"]}, … ] }</code></pre>
+
+<!-- ================================================================ -->
+<h2 id="graph">8. 重讲 04 号页 · GraphRAG 与 Wiki 知识沉淀</h2>
+
+<h3>8.1 为什么有了向量检索还要图谱？</h3>
+<p>问"<b>免赔额影响哪些责任条款</b>"时，相关内容散落在五份合同的不同章节里。向量检索找的是"<b>长得像问题的句子</b>"——它不知道"免赔额"和"责任条款"之间有一条明确的<b>免除责任</b>边。图谱反过来：它只存"<b>谁——什么关系——谁</b>"这样的三元组，天生擅长跨文档关系。所以本项目把两者<b>并联</b>（不是替换）成三条检索通道。</p>
+<div class="pipe">
+  <div class="pcard graph chC" style="border-top:3px solid var(--green)"><b class="t" style="color:var(--green)">三元组长这样</b><code>众安百万医疗险</code>（保险产品）<br><b>--免除责任--→</b><br><code>1万元免赔额</code>（费率因子）<br><small>边上还挂着 evidence 原文短句和 chunk_id 出处</small></div>
+  <div class="parr">→</div>
+  <div class="pcard"><b class="t" style="color:var(--green)">问答时怎么用</b>① 实体链接：实体名出现在问题里即命中<br>② 1-hop：沿边走一步收集邻居<br>③ 邻居的 <code>chunk_ids</code>（≤8）进检索第三通道，三元组（生成时 ≤6 条）进 prompt</div>
+</div>
+
+<h3>8.2 本体约束 = 给 LLM 立的"白名单"（04 号页核心概念）</h3>
+<p>让 LLM 自由抽取实体关系，它会抽出"系统/模块/包含"这类 IT 词汇污染图谱。所以 <code>kg.py</code> 顶部写死了保险领域本体——<b>实体只许 8 类、关系只许 8 种</b>，抽取 prompt 明说"本体外的信息一律不抽"，抽取结果还要过一道代码校验（<code>add_extraction</code>），类型不在白名单直接丢弃。</p>
+<div class="onto-grid">
+<table>
+<tr><th>8 类实体</th><th>大白话</th></tr>
+<tr><td>保险产品</td><td>哪款保单（如"众安百万医疗险"）</td></tr>
+<tr><td>责任条款 / 免责条款</td><td>保什么 / 不保什么</td></tr>
+<tr><td>费率因子</td><td>影响价格的因素（免赔额、年龄档）</td></tr>
+<tr><td>犹豫期</td><td>买了能无条件退的窗口期</td></tr>
+<tr><td>保额 / 期限</td><td>赔多少 / 保多久</td></tr>
+<tr><td>被保险人群体</td><td>给谁保（未成年人/家庭单）</td></tr>
+</table>
+<table>
+<tr><th>8 种关系</th><th>大白话</th></tr>
+<tr><td>承保责任 / 免除责任</td><td>保这个 / 明确不保这个</td></tr>
+<tr><td>适用费率</td><td>价格受它影响</td></tr>
+<tr><td>享有犹豫期</td><td>适用这段反悔窗口</td></tr>
+<tr><td>约定保额 / 约定期限</td><td>赔多少 / 保多久</td></tr>
+<tr><td>适用群体</td><td>投保人范围</td></tr>
+<tr><td>关联条款</td><td>兜底关联关系</td></tr>
+</table>
+</div>
+<p class="muted">白名单是<b>双向</b>的：写入侧挡住垃圾（校验丢弃），生成侧写进 system prompt（"不得编造本体外的条款关系"）。</p>
+
+<h3>8.3 图谱怎么建的：一次性离线流水线（问答时不建图！）</h3>
+<div class="mermaid">
+flowchart LR
+    A["条款 chunks<br/>(structure-aware 切分)"] --> B["按 batch=5 打包<br/>每 chunk 截取前 400 字"]
+    B --> C["线程池 workers=4<br/>并发调 GLM 抽取"]
+    C --> D{"add_extraction<br/>白名单校验"}
+    D -- "实体/关系类型合法" --> E["写入 networkx 图<br/>节点累计 mentions / chunk_ids"]
+    D -- "本体之外" --> F["丢弃"]
+    E --> G["finalize<br/>kg.json：1633 节点 / 1087 边"]
+    G --> H[("artifacts/graph/kg.json")]
+    H -. "服务启动时 load，只读" .-> I["线上 kg.query 实体链接+1-hop"]
+    style F stroke-dasharray: 4 3
+    style H fill:#1c2333,stroke:#3fb950
+</div>
+<p class="muted">关键认知：<b>建图在离线 pipeline（scripts/pipeline.py）跑一次就完事</b>，出错批次静默跳过（不让单批失败拖垮整图）。线上问答只 <code>load</code> 只读，绝不在请求里调 LLM 建图——否则每次提问都要等几分钟。</p>
+
+<h3>8.4 Wiki 知识沉淀闭环：从"碎 chunk"到"主题页"再"反哺检索"</h3>
+<p>动机：chunk 是给机器看的碎片，人需要"<b>犹豫期</b>""<b>免赔额</b>"这样的主题页。沉淀流水线用图谱当骨架聚类，LLM 当写作员，产物再回灌索引：</p>
+<div class="wiki-cycle">
+  <div class="wc-steps">
+    <div class="wc"><b>① 选主题</b>按图谱实体聚类：只挑 <code>mentions≥3</code>（被 ≥3 个 chunk 提及）的实体，最多 24 个主题<small>太冷门的实体不值得单开一页</small></div>
+    <div class="wc-arrow">→</div>
+    <div class="wc"><b>② 喂两样东西</b>该实体的图谱三元组（关系全景） + 关联 chunk 原文（条款证据）</div>
+    <div class="wc-arrow">→</div>
+    <div class="wc"><b>③ GLM 聚合写作</b>只输出 JSON：overview（80 字概述）、points（3–6 条，每条带条款号）、keywords（4–6 个）</div>
+    <div class="wc-arrow">→</div>
+    <div class="wc"><b>④ 渲染成页</b>固定模板 markdown：front-matter 元数据 + 概述 + 要点 + 关联条款小节 + 标签，落盘 artifacts/wiki/</div>
+    <div class="wc-arrow">→</div>
+    <div class="wc"><b>⑤ 建索引</b>index.json 登记 24 页（topic_id/标题/关键词/概述），供 API 与 wiki_lookup 检索</div>
+    <div class="wc-arrow">→</div>
+    <div class="wc end"><b>⑥ 回灌（点睛之笔）</b><code>wiki_pages_as_chunks</code>：每页正文截 1500 字、打 <code>chunk_type=wiki</code> 标记，重新向量化<b>并入主索引</b></div>
+  </div>
+  <div class="wc-back">⟲ 闭环完成：下次任何一次混合检索（BM25 路 / 向量路）都可能命中这些 Wiki chunk——<b>机器沉淀的知识反过来喂机器自己</b>；同时 Agent 的 wiki_lookup 直接读 index.json 给人看完整页。</div>
+</div>
+<p class="muted">对应源码：<code>wiki/sediment.py</code>（cluster_by_entity:50 / generate_wiki_pages:68 / render_pages:99 / wiki_pages_as_chunks:148 / augment_index_with_wiki:170）。实盘产物：24 页，见 Web「Wiki 知识沉淀」页签。</p>
+
+<h3>8.5 离线 × 在线全景总图（把 03 和 04 拼在一起）</h3>
+<div class="mermaid">
+flowchart TB
+    subgraph OFF["离线 pipeline（跑一次）"]
+        direction LR
+        D1["数据获取"] --> D2["结构感知切分<br/>条-款-项"] --> D3["建索引<br/>BM25+向量"] --> D4["图谱抽取<br/>1633节点/1087边"]
+        D4 --> D5["Wiki 沉淀<br/>24主题页"] --> D6["回灌索引<br/>chunk_type=wiki"]
+    end
+    subgraph ON["在线（每次提问）"]
+        direction TB
+        Q["用户问题"] --> S1["Self-RAG · retrieve"]
+        S1 --> S2["三通道：BM25+向量+图谱<br/>RRF→重排 top6"]
+        S2 --> S3["grade_relevant<br/>（↺ rewrite 一次）"]
+        S3 --> S4["generate<br/>证据top5+三元组≤6"]
+        S4 --> S5["grade_supported ≥0.35"]
+        S5 --> S6["compliance 引用装配"] --> S7["grade_useful"] --> ANS["答案+引用+反思"]
+    end
+    D3 -. "索引被加载" .-> S2
+    D4 -. "kg.json 被加载" .-> S2
+    D6 -. "wiki chunk 混在索引里" .-> S2
+    style OFF fill:#161b22,stroke:#bc8cff
+    style ON fill:#161b22,stroke:#58a6ff
+</div>
+
+<!-- ================================================================ -->
+<h2 id="faq">9. FAQ：新人最常问的 8 个问题</h2>
+<table>
+<tr><th style="width:30%">问题</th><th>答案</th></tr>
+<tr><td>反思为什么不用 LLM 来判？</td><td>论文里反思 token 由模型生成；本项目改成<b>确定性规则</b>（分数阈值、bigram 覆盖）。三个理由：结果可复现可测试；零额外 LLM 调用省钱提速；阈值一行环境变量就能调（如 <code>SUPPORT_THRESHOLD</code>）。</td></tr>
+<tr><td>支撑率低为什么不回炉重新生成？</td><td>重新生成大概率换个说法继续编。金融场景的取舍是<b>宁可拒答不可误导</b>——拒答文案还会提示用户"补充更具体的问题或查阅原合同"，把人引向正路。</td></tr>
+<tr><td>Self-RAG 和 Agent 到底什么区别？</td><td>Self-RAG：单轮、无记忆、固定七节点流水线、强质检、必给引用——适合<b>知识问答</b>。Agent：多轮会话记忆（max_turns=8）、意图路由、按需调五工具、SSE 流式、可 HITL 挂起确认——适合<b>办事</b>（算保费、查图谱、翻 Wiki）。两条链路共用同一套检索器、图谱与合规词表。</td></tr>
+<tr><td>拒答是不是系统坏了？</td><td>不是，拒答是<b>特性</b>。三道闸：①检索无候选 ②改写复检仍无 ③支撑率&lt;0.35。评测里拒答率是一个正经指标——全盘照答的系统才危险。</td></tr>
+<tr><td>reflection 轨迹去哪看？</td><td><code>POST /api/chat</code> 返回 JSON 的 <code>reflection</code> 数组；问答页签会把四个章（[Retrieve?]/[IsRelevant?]/[IsSupported?]/[IsUseful?]）渲染出来。</td></tr>
+<tr><td>想调参数改哪里？</td><td><code>config.py</code>：SUPPORT_THRESHOLD=0.35（拒答线）、RRF_K=60（融合平滑度）、RERANK_TOP_N=5；<code>selfrag/graph.py</code> retrieve 里 top_k=15/top_n=6、相关判据 rerank&gt;0.3 或 rrf≥0.03；kg.query 的 chunk≤8/triples≤12。都可用环境变量覆盖。</td></tr>
+<tr><td>实体链接用子串匹配会不会太土？</td><td>领域实体名（"犹豫期""1万元免赔额"）本身高度专有，问题里出现原文即命中，子串够用且零成本。上限截断（chunk≤8）保证极端命中（如"保险"）不冲垮检索。</td></tr>
+<tr><td>图谱通道为什么只算"软加权"？</td><td>它以同权重参与 RRF 投票而非硬插队——图谱命中但文本不相关时，重排阶段（cross-encoder 看的是正文语义）会把它压下去，双保险防"图谱说什么就是什么"。</td></tr>
+</table>
+
+<h3>术语速查</h3>
+<table>
+<tr><th>词</th><th>一句话解释</th></tr>
+<tr><td>chunk</td><td>切分后的最小检索单元（条-款-项层级的一段文本）</td></tr>
+<tr><td>RRF</td><td>倒数排名融合：各通道按名次贡献 1/(60+名次)，跨通道相加</td></tr>
+<tr><td>Cross-Encoder 重排</td><td>问题与文档拼在一起过模型精算相关性（贵而准，只给前 15 用）</td></tr>
+<tr><td>bigram 支撑率</td><td>答案每句拆相邻两字对，统计多少比例能在证据原文里找到</td></tr>
+<tr><td>本体 Ontology</td><td>限死实体/关系类型的白名单（8 实体 + 8 关系）</td></tr>
+<tr><td>1-hop 查询</td><td>从命中实体沿边走一步，收集邻居及其关联 chunk</td></tr>
+<tr><td>回灌</td><td>Wiki 页面向量化后写回主索引，让检索能召回</td></tr>
+<tr><td>HITL</td><td>Human-in-the-loop：Agent 遇高风险意图挂起等人确认（need_human）</td></tr>
+</table>
+
+<div class="box note"><b>下一步阅读路线</b>：本页 → <a href="02-retrieval.html">②混合检索</a>（RRF/rerank 实测分数表）→ <a href="03-selfrag.html">③Self-RAG</a>（节点级 JSON 细节）→ <a href="04-graphrag-wiki.html">④图谱与Wiki</a>（抽取 prompt 全文与真实返回）→ <a href="05-agent.html">⑤顾问Agent</a>（另一条链路）。动手：<code>.venv/bin/python scripts/pipeline.py --skip-data</code> 重建全部产物 → <code>uvicorn insurwiki_rag.server.main:app</code> → 四个页签各玩 10 分钟。</div>
+
+<footer>⓪ 新人图解 · 所有阈值/截断/规模数字逐一对照 src/ 源码与 artifacts/ 实测产物（kg.json 1633/1087，wiki 24 页） · 离线可用</footer>
+</div>
+
+<script src="../html/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true, theme:"neutral", flowchart:{curve:"basis"}, sequence:{useMaxWidth:true}});</script>
+<script>
+/* ===== 16 步互动走查 ===== */
+const STEPS = [
+ {t:"用户在「合规问答」页签输入问题", who:"L0 · 浏览器", d:"示例问题：<code>百万医疗险的免赔额和犹豫期是怎么规定的？</code> 这个问题同时包含两类图谱实体的字面名，一会儿图谱通道会被点亮。",
+  io:"读：输入框 → 发：question", side:"<span class='k'>为什么选这个问题</span>：它一句话覆盖「费率因子·免赔额」和「犹豫期」两类实体，三条检索通道都会开动，最适合观察全链路。", ref:"web/index.html · 页签 qa → fetch('/api/chat')"},
+
+ {t:"POST /api/chat 发出", who:"L0 → L1", d:"前端把问题包成 <code>{\"question\": …}</code> 发给 FastAPI。注意这个页签<b>不流式</b>——Self-RAG 是质检流水线，必须等所有检查完成才能一次返回完整结果与反思轨迹。",
+  io:"发：POST /api/chat<br/>收：answer/refused/support_score/citations/reflection", side:"<span class='k'>对比</span>：Agent 页签走 <code>/api/agent/chat/stream</code>（SSE 流式），边想边吐字。", ref:"web/index.html askQA() · server/main.py:66"},
+
+ {t:"路由转交给 SelfRAGGraph.ask()", who:"L1 → L2", d:"<code>_state[\"selfrag\"].ask(body.question)</code>。selfrag 对象在服务启动时 <code>_bootstrap()</code> 就装配好了（索引、kg.json、检索器、状态机一次加载，常驻内存）。",
+  io:"调：ask(question)", side:"<span class='k'>启动即装配</span>：_bootstrap 还同时装配了 AdvisorAgent——两条链路共用同一个检索器实例和同一份图谱。", ref:"server/main.py:32-39"},
+
+ {t:"① retrieve：先查图谱（第三通道的原料）", who:"L2 → L3", d:"进入第一个节点。<code>self.kg.query(q)</code> 做实体链接：遍历 1633 个实体名，谁的全名出现在问题里谁命中（这里命中「免赔额」「犹豫期」相关实体）；然后 1-hop 展开邻居，收集邻居登记的条款 chunk 与关系三元组。",
+  io:"写：graph_evidence = {linked_entities, chunk_ids≤8, triples≤12}", side:"<span class='k'>反思章</span>：稍后 [Retrieve?] 的记录里带着 graph_linked_entities，能直接看到命中了哪些实体。", ref:"selfrag/graph.py:62-71 · graphrag/kg.py:72-105"},
+
+ {t:"② retrieve：调混合检索（三通道并跑）", who:"L2 → L3", d:"<code>self.retriever.search(q, top_k=15, top_n=6, extra_channel=图谱chunk)</code>。内部：BM25 路排序 + 向量路排序 + 图谱 chunk 队列作为第三份排名表，全部进 RRF。",
+  io:"读：artifacts/index（含 wiki 回灌 chunk）+ kg 通道<br/>写：candidates（≤6，带 rrf/rerank/from_graph）", side:"<span class='k'>Wiki 何时出现</span>：此刻通道 A/B 的语料里就混着 chunk_type=wiki 的页面摘要——被召回时它就是一条普通候选。", ref:"selfrag/graph.py:72-75 · retrieval/hybrid.py:123-163"},
+
+ {t:"③ RRF 融合（k=60）", who:"L3 内部", d:"每个通道第 r 名得 <code>1/(60+r)</code>，同一 chunk 跨通道相加。三通道都认的 chunk 分数≈0.047，单通道冠军只有≈0.016——RRF 天然偏爱<b>多路共识</b>。融合后取前 15 进重排。",
+  io:"写：rrf_score", side:"<span class='k'>手算</span>：见第 6.1 节。图谱通道同权重投票，不插队——这就是『软加权』。", ref:"retrieval/hybrid.py:68-75,132-141"},
+
+ {t:"④ Cross-Encoder 重排到 top 6", who:"L3 内部", d:"bge-reranker-v2-m3 把「问题+chunk 正文」逐对精算，按 rerank_score 重排序，只留前 6。粗排（RRF）快而糙负责海选，精排贵而准负责决赛。",
+  io:"写：rerank_score、from_graph 标记", side:"<span class='k'>为什么只喂 15 个</span>：cross-encoder 对每个候选都要跑一次完整前向，候选越多越慢——海选/决赛两级漏斗是检索系统标准姿势。", ref:"retrieval/hybrid.py:77-87,146-155"},
+
+ {t:"第一道拒答闸：候选为空？", who:"L2 · retrieve 内", d:"如果 6 个候选一个都没有（比如问「今天天气如何」），直接置 <code>refused=True</code> 并给出「依据不足」文案——知识库外的问题在这里就被礼貌挡下。",
+  io:"写：refused / 预置 answer", side:"<span class='k'>反思章</span>：[Retrieve?] no —— 第一个 no 章，意味着后面节点全部走 skip 分支。", ref:"selfrag/graph.py:76-80"},
+
+ {t:"⑤ grade_relevant：相关性质检", who:"L2", d:"规则：rerank_score&gt;0.3 或 rrf_score≥0.03 的候选留下作为 relevant。零 LLM 调用——用阈值章代替模型即兴发挥。",
+  io:"读：candidates 分数 → 写：relevant 列表", side:"<span class='k'>反思章</span>：[IsRelevant?] yes/no。yes 时附上留下的 chunk_id 清单。", ref:"selfrag/graph.py:82-96"},
+
+ {t:"岔路口 A：无相关 → rewrite 改写一次", who:"L2 ↔ LLM", d:"条件边路由到 rewrite：LLM 把口语问题改写成关键词完整的检索句（如「退保」→「犹豫期内无条件解除合同退还保费」），置 retried=True，<b>内联重跑 retrieve</b>，再回 grade_relevant 复检。<b>只许一次</b>，防死循环。",
+  io:"写：rewrite、retried=True", side:"<span class='k'>防环闸 1</span>：retried 标志。复检仍无 → 拒答（第二道闸）。", ref:"selfrag/graph.py:98-112 · 条件边 210-214"},
+
+ {t:"岔路口 B：有相关 → generate 生成", who:"L2 → LLM", d:"relevant 前 5 条编号成证据，图谱三元组前 6 条作为附加约束（『仅可引用，不得编造其外关系』），system prompt 要求：只依据证据、引用标 [n]、「结论：」开头、证据不够明说依据不足。",
+  io:"读：relevant[:5] + triples[:6] → 写：answer", side:"<span class='k'>图谱的第二次出场</span>：检索时是通道，生成时是护栏——LLM 想编关系时会被本体约束按住。", ref:"selfrag/graph.py:113-131"},
+
+ {t:"⑥ grade_supported：支撑率质检", who:"L2", d:"答案切句、逐句拆 bigram（相邻两字对）、统计每句有多大比例的两字对能在证据原文找到。覆盖率≥50% 的句子算『有支撑』。支撑率 = 支撑句/总句数。",
+  io:"写：support_score", side:"<span class='k'>手算</span>：4 句中 3 句达标 → 0.75 放行；只有 1 句达标 → 0.25。", ref:"selfrag/graph.py:133-158"},
+
+ {t:"第二道实质闸：支撑率 < 0.35 → 拒答", who:"L2", d:"低支撑意味着答案大半句子在证据里找不到词面依据（疑似编造）。处理方式<b>不是回炉重生成</b>，而是换拒答文案并提示用户补充问题或查原合同——金融取舍：宁可拒答不可误导。",
+  io:"写：refused=True + 拒答文案（含实际支撑率）", side:"<span class='k'>防环闸 2</span>：切断 generate↔check 无限循环的设计选择。阈值 SUPPORT_THRESHOLD 可用环境变量改。", ref:"selfrag/graph.py:159-164 · config.py:44"},
+
+ {t:"⑦ compliance：合规装配", who:"L2", d:"敏感词检查（命中附提示）→ 拼免责声明 → 装配 citations：top5 证据的 chunk_id/条款号/80 字摘录/rrf·rerank 分数/from_graph 标记。前端渲染出的引用卡片就是它。",
+  io:"写：citations、最终 answer", side:"<span class='k'>审计线索</span>：from_graph:true 的引用说明该证据是图谱通道拉进来的——排查检索来源时看这个。", ref:"selfrag/graph.py:178-196"},
+
+ {t:"⑧ grade_useful：收官审计 + 返回", who:"L2 → L1 → L0", d:"答案 &gt;20 字且不含「依据不足」→ useful。状态机结束，ask() 汇总 answer/refused/support_score/citations/reflection 返回前端，页签渲染答案、引用卡片与四枚反思章。",
+  io:"写：useful、[IsUseful?] 章", side:"<span class='k'>四枚章集齐</span>：[Retrieve?] → [IsRelevant?] → [IsSupported?] → [IsUseful?]，一次提问的完整质检档案。", ref:"selfrag/graph.py:166-176,216-230"},
+
+ {t:"复盘：三个问题在链路上的落点", who:"全链路", d:"<b>Self-RAG</b>包着整条流程（第 4–14 步）；<b>混合检索</b>只发生在第 5–8 步的 retrieve 节点内部；<b>图谱</b>出现两次（第 4 步通道 + 第 11 步生成护栏）；<b>Wiki</b>若被召回只可能出现在第 5 步的候选里（chunk_type=wiki 的索引成员）。",
+  io:"—", side:"<span class='k'>一句话</span>：检索是工具，反思是流程，图谱是通道，Wiki 是语料。", ref:"—"}
+];
+let cur = 0;
+const elMain = document.getElementById('smain'), elSide = document.getElementById('sside'),
+      elRef = document.getElementById('sref'), elDots = document.getElementById('sdots'),
+      elCnt = document.getElementById('scount'),
+      btnP = document.getElementById('sprev'), btnN = document.getElementById('snext');
+function render(){
+  const s = STEPS[cur];
+  elMain.innerHTML = '<h4>' + (cur+1) + '/16 · ' + s.t + '</h4><span class="who">' + s.who + '</span><p>' + s.d + '</p>';
+  elSide.innerHTML = s.side + (s.io ? '<h5>状态读写</h5><pre><code>' + s.io.replace(/</g,'&lt;') + '</code></pre>' : '');
+  elRef.innerHTML = '源码对照：<code>' + (s.ref||'—') + '</code>';
+  elCnt.textContent = (cur+1) + ' / ' + STEPS.length;
+  btnP.disabled = cur===0; btnN.disabled = cur===STEPS.length-1;
+  elDots.innerHTML = STEPS.map((_,i)=>'<div class="sdot '+ (i<cur?'done':i===cur?'cur':'') +'" data-i="'+i+'" title="'+(i+1)+'. '+STEPS[i].t+'"></div>').join('');
+  elDots.querySelectorAll('.sdot').forEach(d=>d.onclick=()=>{cur=+d.dataset.i;render();});
+}
+btnP.onclick=()=>{if(cur>0){cur--;render();}};
+btnN.onclick=()=>{if(cur<STEPS.length-1){cur++;render();}};
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'&&cur<STEPS.length-1){cur++;render();}
+  if(e.key==='ArrowLeft'&&cur>0){cur--;render();}
+});
+render();
+</script>
+</body>
+</html>

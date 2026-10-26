@@ -9,7 +9,7 @@
 <header class="site"><div class="inner">
   <span class="logo">InsurWiki-RAG · 深度实现文档</span>
   <a class="cur" href="index.html">总览</a>
-  <a href="01-data.html">①数据与切分</a>
+  <a href="00-beginner.html">⓪新人图解</a><a href="01-data.html">①数据与切分</a>
   <a href="02-retrieval.html">②混合检索</a>
   <a href="03-selfrag.html">③Self-RAG</a>
   <a href="04-graphrag-wiki.html">④图谱与Wiki</a>
@@ -64,7 +64,7 @@ flowchart LR
 <h2>本套文档结构</h2>
 <table>
 <tr><th>#</th><th>文档</th><th>覆盖源码</th><th>你将看到</th></tr>
-<tr><td>①</td><td><a href="01-data.html">数据获取与结构感知切分</a></td><td><code>data/pipeline.py</code>、<code>chunking/structure_aware.py</code></td><td>instruction 正则解析的真实输入输出、去重指纹算法、条-款-项切分逐 chunk 示例、表格 KV 序列化</td></tr>
+<tr><td>⓪</td><td><a href="00-beginner.html">新人图解：Self-RAG/混合检索/GraphRAG/Wiki 全链路</a></td><td><code>全项目</code></td><td>三问三答（谁调用谁）、五层架构图、16 步互动走查、三通道流水线、状态机/离线在线全景图、03·04 号内容重讲</td></tr><tr><td>①</td><td><a href="01-data.html">数据获取与结构感知切分</a></td><td><code>data/pipeline.py</code>、<code>chunking/structure_aware.py</code></td><td>instruction 正则解析的真实输入输出、去重指纹算法、条-款-项切分逐 chunk 示例、表格 KV 序列化</td></tr>
 <tr><td>②</td><td><a href="02-retrieval.html">混合检索：BM25+向量+RRF+Rerank</a></td><td><code>retrieval/hybrid.py</code></td><td>一次真实查询的双路分数表、RRF 手工计算演示、rerank 前后排名变化、索引文件格式</td></tr>
 <tr><td>③</td><td><a href="03-selfrag.html">Self-RAG 反思循环</a></td><td><code>selfrag/graph.py</code></td><td>7 节点状态机逐节点输入输出、反思 token 轨迹 JSON、支撑率 bigram 算法逐句演算、拒答阈值</td></tr>
 <tr><td>④</td><td><a href="04-graphrag-wiki.html">GraphRAG 本体约束与 Wiki 沉淀</a></td><td><code>graphrag/kg.py</code>、<code>wiki/sediment.py</code></td><td>本体定义、抽取 prompt 与真实返回、实体链接 1-hop 查询示例、Wiki 页生成与回灌闭环</td></tr>

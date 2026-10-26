@@ -23,6 +23,7 @@ cp .env.example .env   # 编辑 LLM_API_KEY
 
 - Web 工作台：<http://127.0.0.1:8010/>（问答/Wiki/Agent/图谱 四个页签）
 - 流程文档站：<http://127.0.0.1:8010/docs/>（10 类 Mermaid 高级图，离线可开 `docs/html/index.html`）
+- 新人入门：`docs/deep-dive/00-beginner.html`（图解 Self-RAG 何时/在哪用、GraphRAG 与 Wiki 闭环，建议先读再看 01–06 号页面）
 
 ## 技术栈
 
